@@ -3,6 +3,41 @@
 All notable changes will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [0.1.2] — 2026-04-10
+
+### Critical
+
+- **Fix server lifespan not connected** — `app_lifespan` was assigned to a non-existent `_lifespan_handler` attribute on FastMCP, making the entire server non-functional when run via CLI. Now passed via the `lifespan=` constructor kwarg.
+- **Propagate upstream `isError` flag** — upstream tool errors were silently converted to success responses. Now raises `ToolError` so `isError=true` is preserved in the proxied response.
+
+### Fixes
+
+- Fix `_surfaced_ids` set pruning modifying a set during iteration (potential `RuntimeError` on CPython 3.12+); now uses snapshot via `itertools.islice`
+- Fix `_parse_results` regex splitting on `---` inside content (YAML frontmatter, markdown horizontal rules); now requires score bracket `[N.N]` after separator
+- Fix `_parse_scratch_list` truncating keys containing `: ` (e.g., `db: config`); now uses `rfind` heuristic anchored on trailing `...` marker
+- Record metrics for non-text-only responses (images, embedded resources) instead of returning silently
+- Pass original arguments (with `_context_query`) to surfacing on cache hit so the agent's query hint is preserved
+- Snapshot config once per request in `_call_tool_inner` to prevent intra-request inconsistency from hot-reload
+- Guard against double `start()` leaking connections by closing previous stack first
+- Normalize `\r\n` and `\r` to `\n` in content cleaning before processing
+- NFKC-normalize text before injection pattern matching to defeat Unicode confusable bypasses (Cyrillic, fullwidth)
+- Add CJK sentence-end punctuation (`。！？`) to `_find_break` for better truncation points in East Asian text
+- Widen UUID-based IDs from 12 hex (48 bits) to 16 hex (64 bits) to reduce collision probability
+- Add `ProxyCache.stats()` thread-safety lock
+- Wrap `_fastmcp_compat` private API access (`_tool_manager._tools`) in try/except for resilience against MCP SDK updates
+- Move `feedback_tracker` creation inside `mcp_adapter` success guard so feedback endpoints are not activated when surfacing init fails
+
+### Docs
+
+- Add `stm_proxy_health` tool to cli.md tool table (was missing; tool count 6 → 7)
+- Correct README tool count (6 → 7)
+- Remove `selective` from auto-selection flowchart in compression.md (`auto_select_strategy` never returns SELECTIVE)
+- Update Note to list `selective` alongside `progressive` and `llm_summary` as opt-in only
+
+### Testing
+
+- 800 automated tests (33 new in `test_qa_round3.py`)
+
 ## [0.1.1] — 2026-04-10
 
 ### CLI

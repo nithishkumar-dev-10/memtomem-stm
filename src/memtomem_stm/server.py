@@ -300,7 +300,7 @@ async def stm_proxy_cache_clear(
 
     Args:
         server: If given, only clear entries for this upstream server prefix.
-        tool: If given (with server), only clear entries for this specific tool.
+        tool: If given, only clear entries for this tool (across all servers, or scoped to server if both provided).
     """
     app = _get_ctx(ctx)
     pm = app.proxy_manager
@@ -312,6 +312,8 @@ async def stm_proxy_cache_clear(
         return f"Cleared {removed} cache entries for {server}/{tool}."
     elif server:
         return f"Cleared {removed} cache entries for server '{server}'."
+    elif tool:
+        return f"Cleared {removed} cache entries for tool '{tool}'."
     return f"Cleared all {removed} cache entries."
 
 

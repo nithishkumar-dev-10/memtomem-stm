@@ -48,12 +48,12 @@ Options:
                                   [default: stdio]
   --url TEXT                      Endpoint URL (SSE / HTTP).
   --env KEY=VALUE
-  --compression [none|truncate|selective|hybrid]
-                                  [default: hybrid]
+  --compression [auto|none|truncate|selective|hybrid]
+                                  [default: auto]
   --max-chars INTEGER             [default: 8000]
 ```
 
-> **Note**: The CLI's `--compression` flag exposes 4 of the 10 strategies. The remaining six (`auto`, `extract_fields`, `schema_pruning`, `skeleton`, `progressive`, `llm_summary`) are configured by editing `stm_proxy.json` directly. See [Compression Strategies](compression.md).
+> **Note**: The CLI's `--compression` flag exposes 5 of the 10 strategies. The remaining five (`extract_fields`, `schema_pruning`, `skeleton`, `progressive`, `llm_summary`) are configured by editing `stm_proxy.json` directly. See [Compression Strategies](compression.md).
 
 ### Examples
 

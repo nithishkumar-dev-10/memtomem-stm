@@ -71,7 +71,7 @@ def status(config_path: str) -> None:
                 detail = f"{cmd} {args_str}".strip()
             else:
                 detail = cfg.get("url", "")
-            compression = cfg.get("compression", "hybrid")
+            compression = cfg.get("compression", "auto")
             max_chars = cfg.get("max_result_chars", 8000)
             click.echo(f"  {name:<20} prefix={prefix}  [{transport}] {detail}")
             click.echo(f"  {'':<20} compression={compression}  max_chars={max_chars}")
@@ -93,7 +93,7 @@ def list_servers(config_path: str) -> None:
     for name, cfg in servers.items():
         transport = cfg.get("transport", "stdio")
         prefix = cfg.get("prefix", "")
-        compression = cfg.get("compression", "hybrid")
+        compression = cfg.get("compression", "auto")
         if transport == "stdio":
             cmd = cfg.get("command", "")
             args_str = " ".join(cfg.get("args", []))

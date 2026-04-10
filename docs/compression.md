@@ -1,6 +1,6 @@
 # Compression Strategies
 
-memtomem-stm has 10 compression strategies. The CLI's `--compression` flag exposes 4 of them (`none`, `truncate`, `selective`, `hybrid`); the remaining six are selected via the config file or by setting `default_compression: "auto"` and letting `auto_select_strategy()` pick per response.
+memtomem-stm has 10 compression strategies. The CLI's `--compression` flag exposes 5 of them (`auto`, `none`, `truncate`, `selective`, `hybrid`); the remaining five are selected via the config file. The default is `auto`, which lets `auto_select_strategy()` pick per response.
 
 ```mermaid
 flowchart TD

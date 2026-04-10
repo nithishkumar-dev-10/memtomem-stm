@@ -185,7 +185,7 @@ class SurfacingEngine:
                 logger.debug("Surfacing cache hit (empty) for %s/%s", server, tool)
                 return response_text
             logger.debug("Surfacing cache hit (%d results) for %s/%s", len(cached), server, tool)
-            surfacing_id = uuid.uuid4().hex[:12]
+            surfacing_id = uuid.uuid4().hex[:16]
             return self._formatter.inject(
                 response_text,
                 cached,
@@ -259,7 +259,7 @@ class SurfacingEngine:
                 scratch_items = None
 
         # Generate surfacing ID and record event
-        surfacing_id = uuid.uuid4().hex[:12]
+        surfacing_id = uuid.uuid4().hex[:16]
         if self._feedback_tracker is not None:
             try:
                 self._feedback_tracker.record_surfacing(

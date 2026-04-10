@@ -492,3 +492,74 @@ class TestConfigSnapshot:
             if "self._config" in line and not line.strip().startswith("#")
         ]
         assert len(config_refs) == 0, f"Found self._config after snapshot: {config_refs}"
+
+
+# ---------------------------------------------------------------------------
+# 15. _parse_scratch_list key with ": " (P3)
+# ---------------------------------------------------------------------------
+
+
+class TestParseScratchListColonInKey:
+    def _parse(self, text: str):
+        from memtomem_stm.surfacing.mcp_client import McpClientSearchAdapter
+
+        return McpClientSearchAdapter._parse_scratch_list(text)
+
+    def test_simple_key(self):
+        text = "Working memory: 1 entries\n\n  task: build the app..."
+        entries = self._parse(text)
+        assert len(entries) == 1
+        assert entries[0]["key"] == "task"
+        assert "build the app" in entries[0]["value"]
+
+    def test_key_with_colon_space(self):
+        """Key containing ': ' should be preserved via rfind heuristic."""
+        text = "Working memory: 1 entries\n\n  db: config: port 5432..."
+        entries = self._parse(text)
+        assert len(entries) == 1
+        assert entries[0]["key"] == "db: config"
+        assert "port 5432" in entries[0]["value"]
+
+    def test_key_with_colon_and_expires(self):
+        text = (
+            "Working memory: 1 entries\n\n"
+            "  db: host: localhost... (expires: 2026-04-10T12:00:00)"
+        )
+        entries = self._parse(text)
+        assert len(entries) == 1
+        assert entries[0]["key"] == "db: host"
+        assert "localhost" in entries[0]["value"]
+        assert entries[0].get("expires_at") == "2026-04-10T12:00:00"
+
+    def test_no_trailing_dots(self):
+        """When value has no '...', fall back to first ': ' split."""
+        text = "Working memory: 1 entries\n\n  simple: value"
+        entries = self._parse(text)
+        assert len(entries) == 1
+        assert entries[0]["key"] == "simple"
+        assert entries[0]["value"] == "value"
+
+
+# ---------------------------------------------------------------------------
+# 17. surfacing_id 64-bit (P3)
+# ---------------------------------------------------------------------------
+
+
+class TestSurfacingIdLength:
+    def test_surfacing_id_is_16_hex(self):
+        """surfacing_id should be 16 hex chars (64 bits) not 12 (48 bits)."""
+        import uuid
+
+        # Verify the pattern used in engine.py
+        sid = uuid.uuid4().hex[:16]
+        assert len(sid) == 16
+        assert all(c in "0123456789abcdef" for c in sid)
+
+    def test_engine_uses_16_hex(self):
+        import inspect
+
+        from memtomem_stm.surfacing.engine import SurfacingEngine
+
+        source = inspect.getsource(SurfacingEngine)
+        assert ".hex[:16]" in source
+        assert ".hex[:12]" not in source

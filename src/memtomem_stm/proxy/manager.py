@@ -704,7 +704,7 @@ class ProxyManager:
         store = self._get_progressive_store()
         store.evict(cfg.ttl_seconds, cfg.max_stored)
 
-        key = uuid.uuid4().hex[:12]
+        key = uuid.uuid4().hex[:16]
         resp = ProgressiveResponse(
             content=text,
             total_chars=len(text),

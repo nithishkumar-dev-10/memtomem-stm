@@ -205,6 +205,12 @@ class McpClientSearchAdapter:
         ``...`` marker is stripped (core always appends it after the
         truncated preview); ``(expires: ...)`` and ``[promoted]`` are
         captured into optional fields.
+
+        Keys may contain ``: `` (e.g., ``db: config``).  Core always
+        appends ``...`` after the value preview, so we split from the
+        right at the *last* ``: `` that precedes a value ending in
+        ``...`` (or metadata).  If the text has no trailing ``...``,
+        fall back to the first ``: `` split (best-effort).
         """
         if not text or "Working memory is empty" in text:
             return []
@@ -214,9 +220,23 @@ class McpClientSearchAdapter:
             if not line.startswith("  "):
                 continue
             body = line[2:]
-            key, sep, rest = body.partition(": ")
-            if not sep:
+
+            # Best-effort key/value split.  Core always appends "..."
+            # after the value preview, so look for the last ": " that
+            # sits before trailing markers.  Fall back to first ": ".
+            if "..." in body:
+                # Find the ": " closest to the trailing "..." marker
+                trail_pos = body.rfind("...")
+                sep_pos = body.rfind(": ", 0, trail_pos)
+                if sep_pos < 0:
+                    sep_pos = body.find(": ")
+            else:
+                sep_pos = body.find(": ")
+
+            if sep_pos < 0:
                 continue
+            key = body[:sep_pos]
+            rest = body[sep_pos + 2 :]
 
             value_part = rest
             promoted = False

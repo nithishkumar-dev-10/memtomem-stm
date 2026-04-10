@@ -627,7 +627,7 @@ class SelectiveCompressor:
         return self._store_and_build_toc(text, fmt, chunks)
 
     def _store_and_build_toc(self, text: str, fmt: str, chunks: dict[str, str]) -> str:
-        selection_key = uuid.uuid4().hex[:12]
+        selection_key = uuid.uuid4().hex[:16]
 
         self._store.put(
             selection_key,

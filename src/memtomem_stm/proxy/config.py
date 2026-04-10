@@ -63,16 +63,16 @@ class CleaningConfig(BaseModel):
 
 
 class HybridConfig(BaseModel):
-    head_chars: int = 5000
+    head_chars: int = Field(default=5000, gt=0)
     tail_mode: TailMode = TailMode.TOC
-    min_toc_budget: int = 200
-    min_head_chars: int = 100
-    head_ratio: float = 0.6
+    min_toc_budget: int = Field(default=200, gt=0)
+    min_head_chars: int = Field(default=100, gt=0)
+    head_ratio: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 class SelectiveConfig(BaseModel):
-    max_pending: int = 100
-    pending_ttl_seconds: float = 300.0
+    max_pending: int = Field(default=100, gt=0)
+    pending_ttl_seconds: float = Field(default=300.0, ge=0.0)
     json_depth: int = 1
     min_section_chars: int = 50
     pending_store: str = "memory"  # "memory" | "sqlite"
@@ -143,11 +143,11 @@ class ExtractionConfig(BaseModel):
 class ProgressiveConfig(BaseModel):
     """Configuration for progressive (cursor-based) delivery."""
 
-    chunk_size: int = 4000
+    chunk_size: int = Field(default=4000, gt=0)
     """Characters per chunk delivered to the agent."""
-    max_stored: int = 200
+    max_stored: int = Field(default=200, gt=0)
     """Maximum concurrent stored progressive responses."""
-    ttl_seconds: float = 1800.0
+    ttl_seconds: float = Field(default=1800.0, ge=0.0)
     """Time-to-live for stored responses (seconds)."""
     include_structure_hint: bool = True
     """Include remaining headings/structure hint in first chunk footer."""
@@ -155,7 +155,7 @@ class ProgressiveConfig(BaseModel):
 
 class ToolOverrideConfig(BaseModel):
     compression: CompressionStrategy | None = None
-    max_result_chars: int | None = None
+    max_result_chars: int | None = Field(default=None, gt=0)
     llm: LLMCompressorConfig | None = None
     selective: SelectiveConfig | None = None
     hybrid: HybridConfig | None = None
@@ -176,7 +176,7 @@ class UpstreamServerConfig(BaseModel):
     url: str = ""
     headers: dict[str, str] | None = None
     compression: CompressionStrategy = CompressionStrategy.AUTO
-    max_result_chars: int = 8000
+    max_result_chars: int = Field(default=8000, gt=0)
     llm: LLMCompressorConfig | None = None
     selective: SelectiveConfig | None = None
     hybrid: HybridConfig | None = None
@@ -185,24 +185,24 @@ class UpstreamServerConfig(BaseModel):
     tool_overrides: dict[str, ToolOverrideConfig] = {}
     auto_index: bool | None = None
     extraction: bool | None = None
-    max_retries: int = 3
-    reconnect_delay_seconds: float = 1.0
-    max_reconnect_delay_seconds: float = 30.0
-    max_description_chars: int = 200
+    max_retries: int = Field(default=3, ge=0)
+    reconnect_delay_seconds: float = Field(default=1.0, ge=0.0)
+    max_reconnect_delay_seconds: float = Field(default=30.0, ge=0.0)
+    max_description_chars: int = Field(default=200, gt=0)
     strip_schema_descriptions: bool = False
 
 
 class CacheConfig(BaseModel):
     enabled: bool = True
     db_path: Path = Path("~/.memtomem/proxy_cache.db")
-    default_ttl_seconds: float | None = 3600.0
-    max_entries: int = 10000
+    default_ttl_seconds: float | None = Field(default=3600.0, ge=0.0)
+    max_entries: int = Field(default=10000, gt=0)
 
 
 class MetricsConfig(BaseModel):
     enabled: bool = True
     db_path: Path = Path("~/.memtomem/proxy_metrics.db")
-    max_history: int = 10000
+    max_history: int = Field(default=10000, gt=0)
 
 
 # Static context window sizes (tokens) for known model families.
@@ -279,10 +279,10 @@ class ProxyConfig(BaseModel):
     Default 0.65 ensures at least 65% of every response survives compression.
     Set to 0 to disable and use fixed budgets only.
     """
-    max_description_chars: int = 200
+    max_description_chars: int = Field(default=200, gt=0)
     strip_schema_descriptions: bool = False
     consumer_model: str = ""
-    context_budget_ratio: float = 0.05
+    context_budget_ratio: float = Field(default=0.05, ge=0.0, le=1.0)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     auto_index: AutoIndexConfig = Field(default_factory=AutoIndexConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
@@ -309,7 +309,9 @@ class ProxyConfig(BaseModel):
         return min(model_budget, self.default_max_result_chars)
 
     @staticmethod
-    def load_from_file(path: Path) -> ProxyConfig:
+    def load_from_file(path: Path) -> ProxyConfig | None:
+        """Load config from *path*.  Returns ``None`` on parse/validation error
+        (distinct from file-not-found which returns a default ``ProxyConfig``)."""
         resolved = path.expanduser().resolve()
         if not resolved.exists():
             logger.debug("Proxy config file not found: %s", resolved)
@@ -319,7 +321,7 @@ class ProxyConfig(BaseModel):
             return ProxyConfig.model_validate(data)
         except (json.JSONDecodeError, Exception) as exc:
             logger.warning("Failed to parse proxy config %s: %s", resolved, exc)
-            return ProxyConfig()
+            return None
 
 
 class ProxyConfigLoader:
@@ -343,8 +345,14 @@ class ProxyConfigLoader:
         except OSError:
             if self._cached is not None:
                 return self._cached
-            return ProxyConfig.load_from_file(self._path)
+            return ProxyConfig.load_from_file(self._path) or ProxyConfig()
         if mtime != self._mtime or self._cached is None:
-            self._cached = ProxyConfig.load_from_file(self._path)
+            loaded = ProxyConfig.load_from_file(self._path)
+            if loaded is not None:
+                self._cached = loaded
+            else:
+                logger.warning(
+                    "Proxy config parse failed; keeping previous config"
+                )
             self._mtime = mtime
-        return self._cached
+        return self._cached  # type: ignore[return-value]

@@ -134,13 +134,13 @@ class ProxyCache:
         if self._db is None:
             return 0
         with self._lock:
-            if server and tool:
+            if server is not None and tool is not None:
                 cur = self._db.execute(
                     "DELETE FROM proxy_cache WHERE server = ? AND tool = ?", (server, tool)
                 )
-            elif server:
+            elif server is not None:
                 cur = self._db.execute("DELETE FROM proxy_cache WHERE server = ?", (server,))
-            elif tool:
+            elif tool is not None:
                 cur = self._db.execute("DELETE FROM proxy_cache WHERE tool = ?", (tool,))
             else:
                 cur = self._db.execute("DELETE FROM proxy_cache")

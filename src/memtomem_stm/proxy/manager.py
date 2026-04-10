@@ -124,7 +124,7 @@ class ProxyManager:
         servers = self._config.upstream_servers
         if not servers:
             loaded = ProxyConfig.load_from_file(self._config.config_path)
-            servers = loaded.upstream_servers
+            servers = loaded.upstream_servers if loaded else {}
 
         seen_prefixed: set[str] = set()
         for name, cfg in servers.items():
@@ -191,11 +191,12 @@ class ProxyManager:
         read, write = streams[0], streams[1]
         session = await conn_stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
-        await session.list_tools()
+        result = await session.list_tools()
 
         conn.session = session
         conn.stack = conn_stack
-        logger.info("Reconnected to '%s'", name)
+        conn.tools = list(result.tools)
+        logger.info("Reconnected to '%s' (%s tools)", name, len(conn.tools))
 
     async def stop(self) -> None:
         for conn in self._connections.values():
@@ -838,7 +839,7 @@ class ProxyManager:
                     exc,
                 )
                 await asyncio.sleep(delay)
-                delay = min(delay * 2 if delay > 0 else 0, cfg.max_reconnect_delay_seconds)
+                delay = min(max(delay * 2, 0.1), cfg.max_reconnect_delay_seconds)
                 self.tracker.record_reconnect()
                 try:
                     await self._reconnect_server(server)

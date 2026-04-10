@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from contextlib import AsyncExitStack
@@ -30,7 +31,7 @@ class RemoteSearchResult:
         def __init__(self, content: str, source: str, namespace: str):
             self.content = content
             self.metadata = RemoteSearchResult._FakeMeta(source, namespace)
-            self.id = ""
+            self.id = hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def __init__(self, content: str, score: float, source: str = "", namespace: str = "default"):
         self.chunk = self._FakeChunk(content, source, namespace)

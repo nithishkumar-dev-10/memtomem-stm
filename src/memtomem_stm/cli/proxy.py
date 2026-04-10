@@ -128,7 +128,7 @@ def list_servers(config_path: str) -> None:
     default="auto",
     show_default=True,
 )
-@click.option("--max-chars", "max_result_chars", type=int, default=8000, show_default=True)
+@click.option("--max-chars", "max_result_chars", type=click.IntRange(min=1), default=8000, show_default=True)
 def add(
     name: str,
     config_path: str,
@@ -189,7 +189,11 @@ def add(
     if transport == "stdio":
         entry["command"] = command
         if args_str:
-            entry["args"] = shlex.split(args_str)
+            try:
+                entry["args"] = shlex.split(args_str)
+            except ValueError as exc:
+                click.echo(f"Error: malformed --args: {exc}", err=True)
+                sys.exit(1)
     else:
         entry["url"] = url
 
@@ -200,6 +204,9 @@ def add(
                 click.echo(f"Error: --env must be KEY=VALUE, got: {pair}", err=True)
                 sys.exit(1)
             k, v = pair.split("=", 1)
+            if not k:
+                click.echo(f"Error: --env key must be non-empty, got: {pair}", err=True)
+                sys.exit(1)
             env_dict[k] = v
         entry["env"] = env_dict
 

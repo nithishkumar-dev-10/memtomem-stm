@@ -165,7 +165,9 @@ class TestGatingEffectiveness:
         ))
         # First 3 should pass
         for i in range(3):
-            assert gate.should_surface("s", "read_file", f"unique query number {i} here")
+            q = f"unique query number {i} here"
+            assert gate.should_surface("s", "read_file", q)
+            gate.record_surfacing(q)
 
         # 4th should be rate-limited
         assert not gate.should_surface("s", "read_file", "another unique query here now")
@@ -174,6 +176,7 @@ class TestGatingEffectiveness:
         """Near-identical queries within cooldown are suppressed."""
         gate = RelevanceGate(SurfacingConfig(cooldown_seconds=10.0))
         assert gate.should_surface("s", "read_file", "kubernetes monitoring setup config")
+        gate.record_surfacing("kubernetes monitoring setup config")
         # Same query immediately after → rejected
         assert not gate.should_surface("s", "read_file", "kubernetes monitoring setup config")
 
@@ -181,6 +184,7 @@ class TestGatingEffectiveness:
         """Sufficiently different queries pass cooldown check."""
         gate = RelevanceGate(SurfacingConfig(cooldown_seconds=10.0))
         assert gate.should_surface("s", "read_file", "kubernetes monitoring setup config")
+        gate.record_surfacing("kubernetes monitoring setup config")
         # Different enough query → allowed
         assert gate.should_surface("s", "read_file", "redis caching eviction policy details")
 

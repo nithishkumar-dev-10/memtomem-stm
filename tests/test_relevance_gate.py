@@ -59,7 +59,9 @@ class TestRelevanceGateRateLimit:
     def test_rate_limit_exceeded(self):
         gate = _gate(max_surfacings_per_minute=3)
         for i in range(3):
-            assert gate.should_surface("s", f"tool_{i}", f"different query {i}")
+            q = f"different query {i}"
+            assert gate.should_surface("s", f"tool_{i}", q)
+            gate.record_surfacing(q)
         # 4th should be rejected
         assert not gate.should_surface("s", "tool_x", "another different query")
 
@@ -68,11 +70,13 @@ class TestRelevanceGateCooldown:
     def test_duplicate_query_rejected(self):
         gate = _gate(cooldown_seconds=10.0)
         assert gate.should_surface("s", "t1", "exact same query text")
+        gate.record_surfacing("exact same query text")
         assert not gate.should_surface("s", "t2", "exact same query text")
 
     def test_different_query_accepted(self):
         gate = _gate(cooldown_seconds=10.0)
         assert gate.should_surface("s", "t1", "first query about topic A")
+        gate.record_surfacing("first query about topic A")
         assert gate.should_surface("s", "t2", "completely different query about topic B")
 
 

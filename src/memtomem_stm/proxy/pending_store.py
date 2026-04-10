@@ -31,37 +31,45 @@ class InMemoryPendingStore:
     def __init__(self) -> None:
         self._data: dict[str, PendingSelection] = {}
         self._order: deque[str] = deque()
+        self._lock = threading.Lock()
 
     def put(self, key: str, selection: PendingSelection) -> None:
-        self._data[key] = selection
-        self._order.append(key)
+        with self._lock:
+            self._data[key] = selection
+            self._order.append(key)
 
     def get(self, key: str) -> PendingSelection | None:
-        return self._data.get(key)
+        with self._lock:
+            return self._data.get(key)
 
     def touch(self, key: str) -> None:
-        sel = self._data.get(key)
-        if sel is not None:
-            sel.created_at = time.monotonic()
+        with self._lock:
+            sel = self._data.get(key)
+            if sel is not None:
+                sel.created_at = time.monotonic()
 
     def delete(self, key: str) -> None:
-        self._data.pop(key, None)
+        with self._lock:
+            self._data.pop(key, None)
 
     def evict_expired(self, ttl: float) -> None:
-        now = time.monotonic()
-        expired = {k for k, v in self._data.items() if (now - v.created_at) > ttl}
-        for k in expired:
-            self._data.pop(k, None)
-        if expired:
-            self._order = deque(k for k in self._order if k not in expired)
+        with self._lock:
+            now = time.monotonic()
+            expired = {k for k, v in self._data.items() if (now - v.created_at) > ttl}
+            for k in expired:
+                self._data.pop(k, None)
+            if expired:
+                self._order = deque(k for k in self._order if k not in expired)
 
     def evict_oldest(self, max_size: int) -> None:
-        while len(self._data) > max_size and self._order:
-            oldest = self._order.popleft()
-            self._data.pop(oldest, None)
+        with self._lock:
+            while len(self._data) > max_size and self._order:
+                oldest = self._order.popleft()
+                self._data.pop(oldest, None)
 
     def __len__(self) -> int:
-        return len(self._data)
+        with self._lock:
+            return len(self._data)
 
 
 class SQLitePendingStore:

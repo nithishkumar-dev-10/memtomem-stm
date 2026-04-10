@@ -237,6 +237,7 @@ class SurfacingEngine:
             )
             return response_text
 
+        self._gate.record_surfacing(query)
         logger.info(
             "Surfacing %d memories for %s/%s (query=%s)", len(relevant), server, tool, query[:50]
         )

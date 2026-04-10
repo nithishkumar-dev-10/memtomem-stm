@@ -57,9 +57,13 @@ class RelevanceGate:
             if self._jaccard_similarity(query, prev_query) > 0.95:
                 return False
 
+        return True
+
+    def record_surfacing(self, query: str) -> None:
+        """Record that a surfacing was actually performed (call after success)."""
+        now = time.monotonic()
         self._recent_queries.append((now, query))
         self._surfacing_timestamps.append(now)
-        return True
 
     @staticmethod
     def _jaccard_similarity(a: str, b: str) -> float:

@@ -283,6 +283,8 @@ async def stm_proxy_read_more(
         offset: Character offset to start reading from (use next_offset from footer).
         limit: Max characters to return. Defaults to the configured chunk_size.
     """
+    if offset < 0:
+        return "Error: offset must be >= 0"
     app = _get_ctx(ctx)
     return app.proxy_manager.read_more(key, offset, limit)
 

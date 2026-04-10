@@ -184,7 +184,7 @@ class TruncateCompressor:
                 parts.append(inner)
             else:
                 v = data[k]
-                truncated = self._truncate_json_value(v, key_budget - len(k) - 6)
+                truncated = self._truncate_json_value(v, max(0, key_budget - len(k) - 6))
                 part = json.dumps({k: truncated}, ensure_ascii=False, indent=2)
                 inner = part.strip()[1:-1].strip()
                 parts.append(inner)
@@ -270,7 +270,7 @@ class TruncateCompressor:
         sample_count = 3
         head_lines = lines[:sample_count]
         head_text = "\n".join(head_lines)
-        omitted = len(lines) - sample_count - len(tail_lines)
+        omitted = max(0, len(lines) - sample_count - len(tail_lines))
 
         result = f"{head_text}\n... ({omitted} similar lines omitted)\n{tail_text}"
         if len(result) > max_chars:
@@ -386,9 +386,11 @@ class TruncateCompressor:
                     if extra <= remaining:
                         enriched[summary_idx] = summary_body
                     else:
-                        enriched[summary_idx] = summary_body[
-                            : len(enriched[summary_idx]) + remaining
-                        ]
+                        cut = len(enriched[summary_idx]) + remaining
+                        # Find a word boundary near the cut point
+                        while cut > len(enriched[summary_idx]) and cut < len(summary_body) and summary_body[cut] not in " \n\t":
+                            cut -= 1
+                        enriched[summary_idx] = summary_body[:cut]
 
         # ── Assemble ──
         parts: list[str] = []
@@ -554,10 +556,12 @@ class TruncateCompressor:
 
     @staticmethod
     def _find_break(text: str, max_chars: int) -> int:
+        if max_chars <= 0:
+            return 0
         end = min(max_chars, len(text) - 1)
-        floor = int(max_chars * 0.8)
+        floor = max(1, int(max_chars * 0.8))
         for i in range(end, floor - 1, -1):
-            if text[i - 1] in ".!?\n" and (i >= len(text) or text[i] in " \n\t"):
+            if i >= 1 and text[i - 1] in ".!?\n" and (i >= len(text) or text[i] in " \n\t"):
                 return i
         for i in range(end, floor - 1, -1):
             if i < len(text) and text[i] in " \n\t":
@@ -1172,8 +1176,6 @@ class HybridCompressor:
 
     def compress(self, text: str, *, max_chars: int, context_query: str | None = None) -> str:
         if not text or len(text) <= max_chars:
-            return text
-        if len(text) <= self._head_chars:
             return text
 
         separator_overhead = 80

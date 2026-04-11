@@ -131,4 +131,4 @@ CI runs the same three commands on every PR via `.github/workflows/ci.yml`. Mypy
 
 ## License
 
-[Apache License 2.0](LICENSE). Contributions are accepted under the terms of the [Contributor License Agreement](CLA.md), which allows DAPADA Inc. to distribute the Work under Apache-2.0 or any other license terms.
+[Apache License 2.0](LICENSE). Contributions are accepted under the terms of the [Contributor License Agreement](CLA.md).

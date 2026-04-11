@@ -429,9 +429,10 @@ def build_nb03() -> None:
 
             This notebook shows surfacing end-to-end **without requiring
             a real `memtomem-server`** — we point STM at
-            `tests/_fake_memtomem_server.py`, which is the stub the
-            integration tests use. It returns canned memories so the
-            output is deterministic.
+            `notebooks/_fixtures/fake_ltm.py`, a notebook-local stub
+            that returns canned memories with per-call UUIDs so repeated
+            runs stay deterministic and aren't silently suppressed by
+            STM's cross-session dedup.
 
             **You will learn:**
 

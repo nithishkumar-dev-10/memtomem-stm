@@ -7,10 +7,23 @@ exposes the two tools the adapter actually calls — ``mem_search`` and the
 actions — both returning canned text in the format the adapter knows how
 to parse.
 
+**Content must vary per call.** STM's cross-session dedup keys on
+``sha256(content)[:16]`` (see
+``src/memtomem_stm/surfacing/mcp_client.py:34``), so a fixture returning
+identical content across calls gets silently suppressed after the first
+run if the test exercises the ``FeedbackTracker`` path. The current
+integration tests pass ``feedback_enabled=False`` and dodge this, but we
+embed per-call UUIDs anyway so the fixture stays safe to drop into a
+future test that *does* hit the dedup path. Assertions here are all
+substring checks (``"JWT authentication"``, ``"current_task"``) so the
+UUID suffixes are invisible to callers.
+
 Run with: `python <path-to-this-file>`
 """
 
 from __future__ import annotations
+
+import uuid
 
 from mcp.server.fastmcp import FastMCP
 
@@ -23,12 +36,19 @@ async def mem_search(
     top_k: int | None = None,
     namespace: str | list[str] | None = None,
 ) -> str:
-    """Return canned search hits in the format McpClientSearchAdapter parses."""
+    """Return canned search hits in the format McpClientSearchAdapter parses.
+
+    Each call embeds a fresh UUID in both the source path and the body
+    text so ``sha256(content)`` dedup never collapses repeated calls.
+    See the module docstring for the full rationale.
+    """
+    auth_tag = uuid.uuid4().hex[:8]
+    api_tag = uuid.uuid4().hex[:8]
     return (
-        "--- [0.92] /notes/auth.md ---\n"
-        "JWT authentication uses HS256 with rotating secrets every 24 hours.\n"
-        "--- [0.87] /notes/api.md ---\n"
-        "All API responses include rate limit headers (X-RateLimit-*).\n"
+        f"--- [0.92] /notes/auth-{auth_tag}.md ---\n"
+        f"JWT authentication uses HS256 with rotating secrets every 24 hours. [run={auth_tag}]\n"
+        f"--- [0.87] /notes/api-{api_tag}.md ---\n"
+        f"All API responses include rate limit headers (X-RateLimit-*). [run={api_tag}]\n"
     )
 
 

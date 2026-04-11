@@ -102,12 +102,17 @@ def isolate_stm_state(prefix: str = "mms_nb_", *, enable_surfacing: bool = False
 
 
 def configure_fake_ltm() -> Path:
-    """Point STM's surfacing engine at ``tests/_fake_memtomem_server.py``.
+    """Point STM's surfacing engine at ``notebooks/_fixtures/fake_ltm.py``.
 
     Used by notebook 03 so that surfacing can be demonstrated without the
-    user needing a real ``memtomem-server`` on their PATH. Also lowers the
-    ``min_response_chars`` threshold so that small tutorial tool responses
-    actually trigger surfacing.
+    user needing a real ``memtomem-server`` on their PATH. The fixture is
+    a notebook-local fake (distinct from ``tests/_fake_memtomem_server.py``)
+    that embeds a fresh UUID in each memory chunk — STM's cross-session
+    dedup keys on ``sha256(content)`` so a fixed-content fake would appear
+    broken on repeated notebook runs. See ``fake_ltm.py``'s module docstring
+    for the full rationale. Also lowers the ``min_response_chars``
+    threshold so that small tutorial tool responses actually trigger
+    surfacing.
 
     Must be called **after** :func:`isolate_stm_state` (with
     ``enable_surfacing=True``) and **before** :func:`stm_session`.

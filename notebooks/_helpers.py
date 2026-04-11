@@ -68,9 +68,11 @@ def fake_ltm_path() -> Path:
 def isolate_stm_state(prefix: str = "mms_nb_", *, enable_surfacing: bool = False) -> Path:
     """Create an isolated tempdir and point STM's state there via env vars.
 
-    Sets ``MEMTOMEM_STM_PROXY__CONFIG_PATH``, ``...CACHE__DB_PATH``, and
-    ``...METRICS__DB_PATH`` so that nothing the notebook does touches the
-    user's real ``~/.memtomem/`` directory.
+    Sets ``MEMTOMEM_STM_PROXY__CONFIG_PATH``, ``...CACHE__DB_PATH``,
+    ``...METRICS__DB_PATH``, and ``MEMTOMEM_STM_SURFACING__FEEDBACK_DB_PATH``
+    so that nothing the notebook does touches the user's real
+    ``~/.memtomem/`` directory — including the surfacing feedback store
+    that holds cross-session dedup state.
 
     Parameters
     ----------
@@ -93,6 +95,7 @@ def isolate_stm_state(prefix: str = "mms_nb_", *, enable_surfacing: bool = False
     os.environ["MEMTOMEM_STM_PROXY__CONFIG_PATH"] = str(config_path)
     os.environ["MEMTOMEM_STM_PROXY__CACHE__DB_PATH"] = str(tmp / "proxy_cache.db")
     os.environ["MEMTOMEM_STM_PROXY__METRICS__DB_PATH"] = str(tmp / "proxy_metrics.db")
+    os.environ["MEMTOMEM_STM_SURFACING__FEEDBACK_DB_PATH"] = str(tmp / "stm_feedback.db")
     if not enable_surfacing:
         os.environ["MEMTOMEM_STM_SURFACING__ENABLED"] = "false"
     return config_path

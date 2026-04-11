@@ -18,7 +18,8 @@ class FeedbackTracker:
 
     def __init__(self, config: SurfacingConfig, db_path: Path | None = None) -> None:
         self._config = config
-        self._store = FeedbackStore(db_path or Path("~/.memtomem/stm_feedback.db").expanduser())
+        resolved = db_path if db_path is not None else config.feedback_db_path.expanduser()
+        self._store = FeedbackStore(resolved)
         self._store.initialize()
 
     @property

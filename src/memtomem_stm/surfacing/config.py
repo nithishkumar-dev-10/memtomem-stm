@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel
 
 from memtomem_stm.proxy.config import MODEL_CONTEXT_WINDOWS
@@ -26,6 +28,11 @@ class SurfacingConfig(BaseModel):
     """
 
     enabled: bool = True
+    feedback_db_path: Path = Path("~/.memtomem/stm_feedback.db")
+    """Path to the SQLite store for surfacing events, feedback, and
+    ``seen_memories`` cross-session dedup. Configurable so tests and
+    notebooks can isolate state into a tempdir via
+    ``MEMTOMEM_STM_SURFACING__FEEDBACK_DB_PATH``."""
     ltm_mcp_command: str = "memtomem-server"
     ltm_mcp_args: list[str] = []
     min_score: float = 0.02

@@ -42,13 +42,14 @@ Notebook 04 auto-skips subsequent cells when no API key is set — it's safe to 
 
 ## State isolation
 
-Every notebook's first code cell calls `isolate_stm_state()` from `_helpers.py`, which points STM's proxy config, cache, and metrics databases at a fresh temp directory via environment variables:
+Every notebook's first code cell calls `isolate_stm_state()` from `_helpers.py`, which points STM's proxy config, cache, metrics, and surfacing feedback databases at a fresh temp directory via environment variables:
 
 - `MEMTOMEM_STM_PROXY__CONFIG_PATH`
 - `MEMTOMEM_STM_PROXY__CACHE__DB_PATH`
 - `MEMTOMEM_STM_PROXY__METRICS__DB_PATH`
+- `MEMTOMEM_STM_SURFACING__FEEDBACK_DB_PATH`
 
-One caveat: STM's surfacing feedback database (`~/.memtomem/stm_feedback.db`) currently has a hardcoded path and is **not** isolated. Notebook 03 writes to it, but the rows age out after 7 days via STM's built-in dedup TTL. If you need stricter isolation for notebook 03, delete `~/.memtomem/stm_feedback.db` before running it.
+All four notebooks — including notebook 03's surfacing demo — are fully hermetic. Your real `~/.memtomem/` is untouched.
 
 ## Files
 

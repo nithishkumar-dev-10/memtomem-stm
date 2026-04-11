@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -218,3 +218,85 @@ class TestUpstreamHealth:
         mgr._connections.clear()
         health = mgr.get_upstream_health()
         assert health == {}
+
+
+# ── Langfuse tracing integration ─────────────────────────────────────────
+
+
+class TestLangfuseTracing:
+    """MVP wiring: call_tool() wraps the pipeline in a Langfuse observation.
+
+    These tests patch the module-level ``_langfuse_client`` singleton in
+    ``memtomem_stm.observability.tracing``. When no client is set (default),
+    ``traced()`` returns ``nullcontext()`` — which is the path every other
+    test in this file already exercises implicitly.
+    """
+
+    def test_traced_no_client_returns_nullcontext(self, monkeypatch):
+        """Without a configured Langfuse client, traced() is a no-op context manager."""
+        monkeypatch.setattr(
+            "memtomem_stm.observability.tracing._langfuse_client", None
+        )
+        from memtomem_stm.observability.tracing import traced
+
+        with traced("proxy_call", metadata={"server": "srv"}) as span:
+            assert span is None  # nullcontext yields None
+
+    def test_traced_with_client_delegates_to_sdk(self, monkeypatch):
+        """With a client set, traced() forwards name+kwargs to start_as_current_observation."""
+        mock_client = MagicMock()
+        monkeypatch.setattr(
+            "memtomem_stm.observability.tracing._langfuse_client", mock_client
+        )
+        from memtomem_stm.observability.tracing import traced
+
+        traced("proxy_call", metadata={"server": "srv", "tool": "t"})
+
+        mock_client.start_as_current_observation.assert_called_once_with(
+            name="proxy_call",
+            metadata={"server": "srv", "tool": "t"},
+        )
+
+    async def test_call_tool_wraps_pipeline_in_span(self, monkeypatch):
+        """ProxyManager.call_tool creates a Langfuse observation per invocation."""
+        mock_client = MagicMock()
+        monkeypatch.setattr(
+            "memtomem_stm.observability.tracing._langfuse_client", mock_client
+        )
+
+        mgr = _make_manager()
+        mgr._connections["srv"].session.call_tool.return_value = _make_result("ok")
+
+        result = await mgr.call_tool("srv", "tool", {})
+
+        # Span was created with correct name + metadata
+        mock_client.start_as_current_observation.assert_called_once()
+        call = mock_client.start_as_current_observation.call_args
+        assert call.kwargs["name"] == "proxy_call"
+        metadata = call.kwargs["metadata"]
+        assert metadata["server"] == "srv"
+        assert metadata["tool"] == "tool"
+        assert isinstance(metadata["trace_id"], str)
+        assert len(metadata["trace_id"]) == 16
+
+        # Return value still flows through
+        assert result == "ok"
+
+    async def test_call_tool_span_wraps_error_path(self, monkeypatch):
+        """On upstream failure, the span is still created and the exception propagates."""
+        mock_client = MagicMock()
+        monkeypatch.setattr(
+            "memtomem_stm.observability.tracing._langfuse_client", mock_client
+        )
+
+        mgr = _make_manager()
+        mgr._connections["srv"].session.call_tool.side_effect = ConnectionError("down")
+
+        with patch.object(mgr, "_reconnect_server", new_callable=AsyncMock):
+            with pytest.raises(ConnectionError):
+                await mgr.call_tool("srv", "tool", {})
+
+        mock_client.start_as_current_observation.assert_called_once()
+        call = mock_client.start_as_current_observation.call_args
+        assert call.kwargs["name"] == "proxy_call"
+        assert call.kwargs["metadata"]["server"] == "srv"

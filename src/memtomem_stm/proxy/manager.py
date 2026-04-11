@@ -50,6 +50,7 @@ from memtomem_stm.proxy.progressive import (
     ProgressiveStoreAdapter,
 )
 from memtomem_stm.proxy.metrics import CallMetrics, ErrorCategory, TokenTracker
+from memtomem_stm.observability.tracing import traced
 
 # JSON-RPC error codes that indicate bad input, not connection problems.
 # Retrying these wastes time and can damage the connection.
@@ -743,18 +744,38 @@ class ProxyManager:
         return health
 
     async def call_tool(self, server: str, tool: str, arguments: dict[str, Any]) -> str | list:
-        """Forward a tool call to upstream, compress, surface, and return."""
+        """Forward a tool call to upstream, compress, surface, and return.
+
+        Wraps the entire call pipeline in a Langfuse observation span when
+        Langfuse is configured. The span carries ``server``, ``tool``, and
+        ``trace_id`` metadata so it can be correlated with the matching row
+        in ``proxy_metrics.db``. When Langfuse is not configured, ``traced()``
+        returns ``nullcontext()`` and the wrapper is a no-op — no perf cost,
+        no behavior change for users who don't opt in.
+        """
         if server not in self._connections:
             raise KeyError(f"Unknown upstream server: '{server}'")
-        return await self._call_tool_inner(server, tool, arguments)
+        trace_id = uuid.uuid4().hex[:16]
+        with traced(
+            "proxy_call",
+            metadata={"server": server, "tool": tool, "trace_id": trace_id},
+        ):
+            return await self._call_tool_inner(server, tool, arguments, trace_id=trace_id)
 
     async def _call_tool_inner(
         self,
         server: str,
         tool: str,
         arguments: dict[str, Any],
+        *,
+        trace_id: str | None = None,
     ) -> str | list:
-        trace_id = uuid.uuid4().hex[:16]
+        # Public entry point ``call_tool`` generates the trace_id and passes
+        # it in so it can match the enclosing Langfuse span. Direct callers
+        # (tests and internal dispatch) that don't care about tracing omit
+        # the argument and we generate one here.
+        if trace_id is None:
+            trace_id = uuid.uuid4().hex[:16]
         logger.debug("trace_id=%s server=%s tool=%s", trace_id, server, tool)
 
         # Snapshot config once to avoid intra-request inconsistency from

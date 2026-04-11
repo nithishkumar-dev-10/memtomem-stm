@@ -154,12 +154,26 @@ pip install "memtomem-stm[langfuse]"
 uv pip install "memtomem-stm[langfuse]"
 
 export MEMTOMEM_STM_LANGFUSE__ENABLED=true
-export MEMTOMEM_STM_LANGFUSE__PUBLIC_KEY=pk-...
-export MEMTOMEM_STM_LANGFUSE__SECRET_KEY=sk-...
-export MEMTOMEM_STM_LANGFUSE__HOST=https://cloud.langfuse.com
+export MEMTOMEM_STM_LANGFUSE__PUBLIC_KEY=pk-lf-...
+export MEMTOMEM_STM_LANGFUSE__SECRET_KEY=sk-lf-...
+export MEMTOMEM_STM_LANGFUSE__HOST=https://cloud.langfuse.com   # or http://localhost:3000 for self-hosted
 ```
 
-Traces proxy calls for latency analysis and debugging. **Langfuse is also the recommended shared observability UI for team deployments** — memtomem-stm intentionally does not ship an in-repo web dashboard, since the MCP tools (`stm_proxy_stats`, `stm_surfacing_stats`, `stm_proxy_health`), SQLite metrics (`proxy_metrics.db`, `stm_feedback.db`), and Langfuse together cover the observability surface. When reporting issues, include the `trace_id` emitted by proxy calls so it can be correlated with Langfuse spans.
+**What gets traced.** Every proxy tool invocation is wrapped in a single Langfuse observation called **`proxy_call`** for the full pipeline (cache lookup → upstream call → clean → compress → surface → index). The span carries:
+
+| Metadata key | Value |
+|---|---|
+| `server` | Upstream server name (e.g. `filesystem`, `github`) |
+| `tool` | Upstream tool name as seen by STM |
+| `trace_id` | Same 16-char hex id persisted in `proxy_metrics.db.trace_id` — join on this to correlate a Langfuse span with its SQLite metrics row |
+
+Span duration is Langfuse-native (auto-recorded from the `with` block), so cache hits, upstream latency, compression cost, and surfacing are all reflected in the wall-clock timing without extra instrumentation. Errors propagate through the span — a failed upstream call shows up as a span with an exception attached.
+
+**What is _not_ traced in this release** — nested sub-spans (cleaning / compression / surfacing), sampling, and the `stm_surfacing_feedback` / `stm_surfacing_stats` tool calls. These are deliberate follow-ups; the MVP focuses on closing the "docs promise something the code doesn't deliver" gap for the top-level proxy pipeline only.
+
+**Why this is the recommended observability UI.** memtomem-stm intentionally does not ship an in-repo web dashboard — the MCP tools (`stm_proxy_stats`, `stm_surfacing_stats`, `stm_proxy_health`), SQLite metrics (`proxy_metrics.db`, `stm_feedback.db`), and Langfuse together cover the observability surface without duplication. For team deployments that want a shared UI, point every instance at the same Langfuse project. When reporting issues, include the `trace_id` from `stm_proxy_stats` output so it can be located in Langfuse immediately.
+
+**Graceful degradation.** If the `langfuse` optional extra is not installed, or if `MEMTOMEM_STM_LANGFUSE__ENABLED=false` (the default), the trace wrapper collapses to a `nullcontext` — zero overhead, no log spam, no behavior change.
 
 ## Data Storage
 

@@ -61,10 +61,12 @@ pip install "memtomem-stm[langfuse]"
 uv pip install "memtomem-stm[langfuse]"
 
 export MEMTOMEM_STM_LANGFUSE__ENABLED=true
-export MEMTOMEM_STM_LANGFUSE__PUBLIC_KEY=pk-...
-export MEMTOMEM_STM_LANGFUSE__SECRET_KEY=sk-...
-export MEMTOMEM_STM_LANGFUSE__HOST=https://cloud.langfuse.com
+export MEMTOMEM_STM_LANGFUSE__PUBLIC_KEY=pk-lf-...
+export MEMTOMEM_STM_LANGFUSE__SECRET_KEY=sk-lf-...
+export MEMTOMEM_STM_LANGFUSE__HOST=https://cloud.langfuse.com   # or http://localhost:3000 for self-hosted
 ```
+
+When enabled, every proxy tool invocation is wrapped in a `proxy_call` Langfuse observation carrying `server`, `tool`, and `trace_id` metadata — see [Operations → Langfuse Tracing](operations.md#langfuse-tracing-optional) for the full span shape and correlation details.
 
 ## Config File: `~/.memtomem/stm_proxy.json`
 

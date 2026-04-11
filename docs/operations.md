@@ -159,7 +159,7 @@ export MEMTOMEM_STM_LANGFUSE__SECRET_KEY=sk-...
 export MEMTOMEM_STM_LANGFUSE__HOST=https://cloud.langfuse.com
 ```
 
-Traces proxy calls for latency analysis and debugging.
+Traces proxy calls for latency analysis and debugging. **Langfuse is also the recommended shared observability UI for team deployments** — memtomem-stm intentionally does not ship an in-repo web dashboard, since the MCP tools (`stm_proxy_stats`, `stm_surfacing_stats`, `stm_proxy_health`), SQLite metrics (`proxy_metrics.db`, `stm_feedback.db`), and Langfuse together cover the observability surface. When reporting issues, include the `trace_id` emitted by proxy calls so it can be correlated with Langfuse spans.
 
 ## Data Storage
 

@@ -20,6 +20,8 @@ class LangfuseConfig(BaseModel):
     public_key: str = ""
     secret_key: str = ""
     host: str = ""
+    sampling_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    """Fraction of proxy calls to trace (0.0–1.0).  Default 1.0 = all."""
 
 
 class STMConfig(BaseSettings):

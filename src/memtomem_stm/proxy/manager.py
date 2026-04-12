@@ -871,7 +871,11 @@ class ProxyManager:
                 # Re-apply surfacing on cache hit so memories stay fresh.
                 # Use original arguments (with _context_query) so the
                 # surfacing engine can use the agent's explicit query hint.
-                cached = await self._apply_surfacing(server, tool, arguments, cached)
+                with traced(
+                    "proxy_call_cache_hit",
+                    metadata={"server": server, "tool": tool},
+                ):
+                    cached = await self._apply_surfacing(server, tool, arguments, cached)
                 return cached
             self.tracker.record_cache_miss()
 
@@ -1018,9 +1022,13 @@ class ProxyManager:
         tc = self._resolve_tool_config(server, tool, proxy_cfg=cfg_snap)
 
         # ── Stage 1: CLEAN ──
-        _t0 = _time.monotonic()
-        cleaned = self._clean_content(original_text, tc.cleaning)
-        _clean_ms = (_time.monotonic() - _t0) * 1000
+        with traced(
+            "proxy_call_clean",
+            metadata={"server": server, "tool": tool},
+        ):
+            _t0 = _time.monotonic()
+            cleaned = self._clean_content(original_text, tc.cleaning)
+            _clean_ms = (_time.monotonic() - _t0) * 1000
 
         # ── Stage 2: COMPRESS (or PROGRESSIVE) ──
         # ``effective_compression`` is the strategy actually used (with AUTO
@@ -1030,7 +1038,6 @@ class ProxyManager:
         effective_compression: CompressionStrategy = tc.compression
         ratio_violation = False
         _pre_scorer_fb = getattr(self._relevance_scorer, "fallback_count", 0)
-
         if tc.compression == CompressionStrategy.PROGRESSIVE and tc.progressive:
             pcfg = tc.progressive
             if len(cleaned) <= pcfg.chunk_size:
@@ -1071,19 +1078,28 @@ class ProxyManager:
             if effective_compression == CompressionStrategy.AUTO:
                 effective_compression = auto_select_strategy(cleaned, max_chars=effective_max_chars)
 
-            _t0 = _time.monotonic()
-            compressed, llm_fallback = await self._apply_compression(
-                cleaned,
-                effective_compression,
-                effective_max_chars,
-                tc.selective,
-                tc.llm,
-                tc.hybrid,
-                server,
-                tool,
-                context_query=context_query,
-            )
-            _compress_ms = (_time.monotonic() - _t0) * 1000
+            with traced(
+                "proxy_call_compress",
+                metadata={
+                    "server": server,
+                    "tool": tool,
+                    "strategy": effective_compression.value,
+                    "max_chars": effective_max_chars,
+                },
+            ):
+                _t0 = _time.monotonic()
+                compressed, llm_fallback = await self._apply_compression(
+                    cleaned,
+                    effective_compression,
+                    effective_max_chars,
+                    tc.selective,
+                    tc.llm,
+                    tc.hybrid,
+                    server,
+                    tool,
+                    context_query=context_query,
+                )
+                _compress_ms = (_time.monotonic() - _t0) * 1000
 
             # ── Compression ratio guard (R4 defense + fallback ladder) ──
             # When the compressor cuts below the dynamic retention floor,
@@ -1209,9 +1225,13 @@ class ProxyManager:
                 _surface_ms = 0.0
                 surfaced = compressed
             else:
-                _t0 = _time.monotonic()
-                surfaced = await self._apply_surfacing(server, tool, upstream_args, compressed)
-                _surface_ms = (_time.monotonic() - _t0) * 1000
+                with traced(
+                    "proxy_call_surface",
+                    metadata={"server": server, "tool": tool},
+                ):
+                    _t0 = _time.monotonic()
+                    surfaced = await self._apply_surfacing(server, tool, upstream_args, compressed)
+                    _surface_ms = (_time.monotonic() - _t0) * 1000
 
         # ── Stage 4: INDEX (optional) ──
         ai_cfg = cfg_snap.auto_index
@@ -1220,17 +1240,21 @@ class ProxyManager:
             and self._index_engine is not None
             and len(cleaned) >= ai_cfg.min_chars
         ):
-            final_result = await self._auto_index_response(
-                server,
-                tool,
-                upstream_args,
-                cleaned,
-                agent_summary=surfaced,
-                compression_strategy=tc.compression.value,
-                original_chars=len(original_text),
-                compressed_chars=len(surfaced),
-                context_query=context_query,
-            )
+            with traced(
+                "proxy_call_index",
+                metadata={"server": server, "tool": tool},
+            ):
+                final_result = await self._auto_index_response(
+                    server,
+                    tool,
+                    upstream_args,
+                    cleaned,
+                    agent_summary=surfaced,
+                    compression_strategy=tc.compression.value,
+                    original_chars=len(original_text),
+                    compressed_chars=len(surfaced),
+                    context_query=context_query,
+                )
         else:
             final_result = surfaced
 

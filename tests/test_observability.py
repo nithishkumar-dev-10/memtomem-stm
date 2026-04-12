@@ -73,15 +73,23 @@ class TestTokenTrackerRPS:
     def test_record_increments_rps(self):
         tracker = TokenTracker()
         for _ in range(5):
-            tracker.record(CallMetrics(server="s", tool="t", original_chars=100, compressed_chars=50))
+            tracker.record(
+                CallMetrics(server="s", tool="t", original_chars=100, compressed_chars=50)
+            )
         s = tracker.get_summary()
         assert s["current_rps"] > 0
 
     def test_record_error_increments_rps(self):
         tracker = TokenTracker()
-        tracker.record_error(CallMetrics(
-            server="s", tool="t", original_chars=0, compressed_chars=0, is_error=True,
-        ))
+        tracker.record_error(
+            CallMetrics(
+                server="s",
+                tool="t",
+                original_chars=0,
+                compressed_chars=0,
+                is_error=True,
+            )
+        )
         s = tracker.get_summary()
         assert s["current_rps"] > 0
 
@@ -99,8 +107,11 @@ def _make_result(text: str, is_error: bool = False):
 
 def _make_manager() -> ProxyManager:
     server_cfg = UpstreamServerConfig(
-        prefix="test", compression=CompressionStrategy.NONE,
-        max_result_chars=50000, max_retries=0, reconnect_delay_seconds=0.0,
+        prefix="test",
+        compression=CompressionStrategy.NONE,
+        max_result_chars=50000,
+        max_retries=0,
+        reconnect_delay_seconds=0.0,
     )
     proxy_cfg = ProxyConfig(
         config_path=Path("/tmp/proxy.json"),
@@ -109,7 +120,10 @@ def _make_manager() -> ProxyManager:
     mgr = ProxyManager(proxy_cfg, TokenTracker())
     session = AsyncMock()
     mgr._connections["srv"] = UpstreamConnection(
-        name="srv", config=server_cfg, session=session, tools=[],
+        name="srv",
+        config=server_cfg,
+        session=session,
+        tools=[],
     )
     return mgr
 
@@ -186,10 +200,15 @@ class TestMetricsStoreTraceId:
     def test_trace_id_stored(self, tmp_path):
         store = MetricsStore(tmp_path / "test.db")
         store.initialize()
-        store.record(CallMetrics(
-            server="srv", tool="tool", original_chars=100, compressed_chars=50,
-            trace_id="abc123def456gh",
-        ))
+        store.record(
+            CallMetrics(
+                server="srv",
+                tool="tool",
+                original_chars=100,
+                compressed_chars=50,
+                trace_id="abc123def456gh",
+            )
+        )
         row = store._db.execute("SELECT trace_id FROM proxy_metrics").fetchone()
         assert row[0] == "abc123def456gh"
         store.close()
@@ -234,9 +253,7 @@ class TestLangfuseTracing:
 
     def test_traced_no_client_returns_nullcontext(self, monkeypatch):
         """Without a configured Langfuse client, traced() is a no-op context manager."""
-        monkeypatch.setattr(
-            "memtomem_stm.observability.tracing._langfuse_client", None
-        )
+        monkeypatch.setattr("memtomem_stm.observability.tracing._langfuse_client", None)
         from memtomem_stm.observability.tracing import traced
 
         with traced("proxy_call", metadata={"server": "srv"}) as span:
@@ -245,9 +262,7 @@ class TestLangfuseTracing:
     def test_traced_with_client_delegates_to_sdk(self, monkeypatch):
         """With a client set, traced() forwards name+kwargs to start_as_current_observation."""
         mock_client = MagicMock()
-        monkeypatch.setattr(
-            "memtomem_stm.observability.tracing._langfuse_client", mock_client
-        )
+        monkeypatch.setattr("memtomem_stm.observability.tracing._langfuse_client", mock_client)
         from memtomem_stm.observability.tracing import traced
 
         traced("proxy_call", metadata={"server": "srv", "tool": "t"})
@@ -258,22 +273,27 @@ class TestLangfuseTracing:
         )
 
     async def test_call_tool_wraps_pipeline_in_span(self, monkeypatch):
-        """ProxyManager.call_tool creates a Langfuse observation per invocation."""
+        """ProxyManager.call_tool creates a Langfuse observation per invocation
+        with nested sub-spans for each pipeline stage."""
         mock_client = MagicMock()
-        monkeypatch.setattr(
-            "memtomem_stm.observability.tracing._langfuse_client", mock_client
-        )
+        monkeypatch.setattr("memtomem_stm.observability.tracing._langfuse_client", mock_client)
 
         mgr = _make_manager()
         mgr._connections["srv"].session.call_tool.return_value = _make_result("ok")
 
         result = await mgr.call_tool("srv", "tool", {})
 
-        # Span was created with correct name + metadata
-        mock_client.start_as_current_observation.assert_called_once()
-        call = mock_client.start_as_current_observation.call_args
-        assert call.kwargs["name"] == "proxy_call"
-        metadata = call.kwargs["metadata"]
+        # Top-level span + nested sub-spans for clean, compress, surface
+        calls = mock_client.start_as_current_observation.call_args_list
+        span_names = [c.kwargs["name"] for c in calls]
+        assert span_names[0] == "proxy_call"
+        assert "proxy_call_clean" in span_names
+        assert "proxy_call_compress" in span_names
+        assert "proxy_call_surface" in span_names
+
+        # Top-level span has correct metadata
+        top_call = calls[0]
+        metadata = top_call.kwargs["metadata"]
         assert metadata["server"] == "srv"
         assert metadata["tool"] == "tool"
         assert isinstance(metadata["trace_id"], str)
@@ -282,12 +302,32 @@ class TestLangfuseTracing:
         # Return value still flows through
         assert result == "ok"
 
+    def test_sampling_skips_tracing(self, monkeypatch):
+        """When sampling_rate < 1.0 and the roll misses, traced() returns nullcontext."""
+        mock_client = MagicMock()
+        monkeypatch.setattr("memtomem_stm.observability.tracing._langfuse_client", mock_client)
+        monkeypatch.setattr("memtomem_stm.observability.tracing._sampling_rate", 0.0)
+        from memtomem_stm.observability.tracing import traced
+
+        ctx = traced("proxy_call", metadata={})
+        # With rate=0.0, every call should be sampled out → nullcontext
+        assert type(ctx).__name__ == "nullcontext"
+        mock_client.start_as_current_observation.assert_not_called()
+
+    def test_sampling_rate_one_always_traces(self, monkeypatch):
+        """sampling_rate=1.0 means every call is traced."""
+        mock_client = MagicMock()
+        monkeypatch.setattr("memtomem_stm.observability.tracing._langfuse_client", mock_client)
+        monkeypatch.setattr("memtomem_stm.observability.tracing._sampling_rate", 1.0)
+        from memtomem_stm.observability.tracing import traced
+
+        traced("proxy_call", metadata={})
+        mock_client.start_as_current_observation.assert_called_once()
+
     async def test_call_tool_span_wraps_error_path(self, monkeypatch):
         """On upstream failure, the span is still created and the exception propagates."""
         mock_client = MagicMock()
-        monkeypatch.setattr(
-            "memtomem_stm.observability.tracing._langfuse_client", mock_client
-        )
+        monkeypatch.setattr("memtomem_stm.observability.tracing._langfuse_client", mock_client)
 
         mgr = _make_manager()
         mgr._connections["srv"].session.call_tool.side_effect = ConnectionError("down")

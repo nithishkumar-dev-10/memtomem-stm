@@ -1001,6 +1001,7 @@ class SkeletonCompressor:
 
         # Build sections: heading + first few meaningful content lines
         parts: list[str] = []
+        total_body_trimmed = 0
         budget_per_section = max(60, (max_chars - 80) // len(headings))
 
         for i, m in enumerate(headings):
@@ -1013,21 +1014,28 @@ class SkeletonCompressor:
             kept = [lines[0]]
             kept_chars = len(lines[0])
 
+            # Measure total body content (non-empty, non-heading lines)
+            body_lines = [ln for ln in lines[1:] if ln.strip()]
+            section_body_chars = sum(len(ln) for ln in body_lines)
+
             # Add content lines until per-section budget
-            for line in lines[1:]:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                # Prioritize: list items, table rows, HTTP methods, code fences
+            for line in body_lines:
                 if kept_chars + len(line) + 1 > budget_per_section:
                     break
                 kept.append(line)
                 kept_chars += len(line) + 1
 
+            kept_body_chars = kept_chars - len(lines[0])
+            total_body_trimmed += max(0, section_body_chars - kept_body_chars)
+
             parts.append("\n".join(kept))
 
         result = "\n\n".join(parts)
-        result += f"\n(skeleton — {len(text)} chars original)"
+        result += (
+            f"\n(skeleton — {len(text)} chars original"
+            f", {total_body_trimmed} body_trimmed_chars"
+            f", {len(headings)} sections)"
+        )
 
         if len(result) > max_chars:
             result = result[:max_chars]

@@ -808,6 +808,40 @@ class TestSkeletonInfoLoss:
         assert len(result) < len(API_DOCS)
         # Original metadata is appended
         assert "skeleton" in result
+        assert "body_trimmed_chars" in result
+
+    def test_body_trimmed_chars_positive(self):
+        """body_trimmed_chars is positive when body content is actually trimmed."""
+        comp = SkeletonCompressor()
+        result = comp.compress(API_DOCS, max_chars=800)
+
+        import re
+
+        m = re.search(r"(\d+) body_trimmed_chars", result)
+        assert m, "body_trimmed_chars not found in skeleton footer"
+        trimmed = int(m.group(1))
+        assert trimmed > 0, "Expected positive body_trimmed_chars for compressed doc"
+
+    def test_body_trimmed_chars_zero_when_fits(self):
+        """body_trimmed_chars is 0 when all content fits within budget."""
+        comp = SkeletonCompressor()
+        # Budget larger than input — no compression needed, returns as-is
+        result = comp.compress(API_DOCS, max_chars=len(API_DOCS) + 1000)
+        assert result == API_DOCS  # passthrough, no footer
+
+    def test_skeleton_footer_sections_count(self):
+        """Footer reports correct number of sections (headings)."""
+        comp = SkeletonCompressor()
+        result = comp.compress(API_DOCS, max_chars=1000)
+
+        import re
+
+        m = re.search(r"(\d+) sections\)", result)
+        assert m, "sections count not found in skeleton footer"
+        sections = int(m.group(1))
+        # API_DOCS has: GET, POST, PUT, DELETE, PATCH top-level
+        # plus Parameters, Response, Request Body subheadings
+        assert sections >= 5, f"Expected ≥5 sections, got {sections}"
 
     def test_skeleton_vs_truncate_heading_coverage(self):
         """Skeleton preserves more headings than truncate at same budget."""

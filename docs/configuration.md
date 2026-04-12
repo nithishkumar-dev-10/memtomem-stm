@@ -34,6 +34,22 @@ export MEMTOMEM_STM_PROXY__STRIP_SCHEMA_DESCRIPTIONS=false
 export MEMTOMEM_STM_PROXY__CACHE__ENABLED=true
 export MEMTOMEM_STM_PROXY__CACHE__DEFAULT_TTL_SECONDS=3600
 export MEMTOMEM_STM_PROXY__METRICS__ENABLED=true
+
+# Relevance scorer (query-aware compression)
+export MEMTOMEM_STM_PROXY__RELEVANCE_SCORER__SCORER=bm25           # "bm25" or "embedding"
+export MEMTOMEM_STM_PROXY__RELEVANCE_SCORER__EMBEDDING_PROVIDER=ollama
+export MEMTOMEM_STM_PROXY__RELEVANCE_SCORER__EMBEDDING_MODEL=nomic-embed-text
+export MEMTOMEM_STM_PROXY__RELEVANCE_SCORER__EMBEDDING_BASE_URL=http://localhost:11434
+
+# Extraction (Stage 4b — auto fact extraction)
+export MEMTOMEM_STM_PROXY__EXTRACTION__ENABLED=false
+export MEMTOMEM_STM_PROXY__EXTRACTION__STRATEGY=llm                # "llm", "heuristic", "hybrid", "none"
+export MEMTOMEM_STM_PROXY__EXTRACTION__MAX_FACTS=10
+export MEMTOMEM_STM_PROXY__EXTRACTION__MIN_RESPONSE_CHARS=500
+export MEMTOMEM_STM_PROXY__EXTRACTION__BACKGROUND=true
+
+# Compression feedback (learning signal for auto-tuner)
+export MEMTOMEM_STM_PROXY__COMPRESSION_FEEDBACK__ENABLED=true
 ```
 
 ### Surfacing
@@ -153,9 +169,30 @@ Full example with all options:
     "min_chars": 2000,
     "namespace": "proxy-{server}"
   },
+  "relevance_scorer": {
+    "scorer": "bm25",
+    "embedding_provider": "ollama",
+    "embedding_model": "nomic-embed-text",
+    "embedding_base_url": "http://localhost:11434",
+    "embedding_timeout": 10.0
+  },
+  "extraction": {
+    "enabled": false,
+    "strategy": "llm",
+    "max_facts": 10,
+    "min_response_chars": 500,
+    "dedup_threshold": 0.92,
+    "namespace": "facts-{server}",
+    "background": true,
+    "max_input_chars": 20000
+  },
   "metrics": {
     "enabled": true,
     "max_history": 10000
+  },
+  "compression_feedback": {
+    "enabled": true,
+    "db_path": "~/.memtomem/stm_feedback.db"
   }
 }
 ```

@@ -3,6 +3,38 @@
 All notable changes will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [0.1.4] — 2026-04-12
+
+### New Features
+
+- **Compression ratio guard** (#20) — post-compression check detects when a strategy cuts below the dynamic retention floor; records `compression_strategy` and `ratio_violation` in `proxy_metrics.db`
+- **Compression feedback tool** (#21) — `stm_compression_feedback` lets agents report information loss from compressed responses; `stm_compression_stats` shows aggregated feedback counts by kind and tool
+- **Ratio guard fallback** (#22) — boundary-aware truncate fallback when compression overshoots the retention floor
+- **3-tier fallback ladder** — progressive → hybrid → truncate; new hybrid tier preserves document structure (head + TOC) for content with ≥ 3 headings that is too small for progressive chunking
+- **Per-tool `retention_floor`** — override the global dynamic retention scaling per server or per tool via `stm_proxy.json`
+- **Compression auto-tuner** — `stm_tuning_recommendations` MCP tool analyses proxy metrics and produces per-tool recommendations (budget increase/decrease, strategy pinning, feedback-driven strategy changes)
+- **Nested Langfuse sub-spans** — `proxy_call_clean`, `proxy_call_compress`, `proxy_call_surface`, `proxy_call_index`, `proxy_call_cache_hit` nested under the top-level `proxy_call` observation via OpenTelemetry context propagation
+- **Langfuse sampling** — `MEMTOMEM_STM_LANGFUSE__SAMPLING_RATE` (0.0–1.0) to control tracing volume; metrics recording is never affected by sampling
+
+### Improvements
+
+- LLM fallback signal in `compression_strategy` metric (e.g. `llm_summary→privacy_fallback`)
+- Embedding scorer fallback count exposed in `CallMetrics.scorer_fallback` + DB column
+- SKELETON `body_trimmed_chars` metadata in compression footer
+- Convention suffix in proxied tool descriptions for progressive/selective delivery
+- Startup warning when `compression != none` but `auto_index` is disabled
+
+### Docs
+
+- 3-tier fallback ladder diagram in compression.md
+- `retention_floor` config reference in configuration.md
+- 7 → 10 MCP tools in cli.md (`stm_compression_feedback`, `stm_compression_stats`, `stm_tuning_recommendations`)
+- Langfuse nested span table and sampling config in operations.md
+
+### Testing
+
+- 963 automated tests (up from 800)
+
 ## [0.1.3] — 2026-04-11
 
 ### Fixes

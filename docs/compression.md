@@ -106,10 +106,19 @@ Configurable per server:
     "head_chars": 5000,
     "tail_mode": "toc",
     "head_ratio": 0.6,
-    "min_toc_budget": 200
+    "min_toc_budget": 200,
+    "min_head_chars": 100
   }
 }
 ```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `head_chars` | 5000 | Target characters for the preserved head section |
+| `tail_mode` | `"toc"` | How to compress the tail (`"toc"` or `"truncate"`) |
+| `head_ratio` | 0.6 | Fraction of budget allocated to head when total budget is tight |
+| `min_toc_budget` | 200 | Minimum characters reserved for the tail TOC/truncation |
+| `min_head_chars` | 100 | Absolute minimum head size — if the budget can't fit this, falls back to truncate |
 
 ## Progressive Delivery (cursor-based)
 

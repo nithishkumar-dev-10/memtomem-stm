@@ -38,6 +38,85 @@ class RemoteSearchResult:
         self.score = score
 
 
+class ResultParser:
+    """Strategy interface for parsing mem_search text output."""
+
+    def parse(self, text: str) -> list[RemoteSearchResult]:
+        raise NotImplementedError
+
+
+class CompactResultParser(ResultParser):
+    """Parse core's compact format: ``[rank] score | source > hierarchy``."""
+
+    def parse(self, text: str) -> list[RemoteSearchResult]:
+        results: list[RemoteSearchResult] = []
+        if not text or not text.strip():
+            return results
+
+        blocks = re.split(r"^(?=\[\d+\]\s+\d+\.?\d*\s*\|)", text, flags=re.MULTILINE)
+
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+
+            first_line, _, rest = block.partition("\n")
+
+            header_match = re.match(r"\[(\d+)\]\s+(\d+\.?\d*)\s*\|(.+)", first_line)
+            if not header_match:
+                continue
+
+            score = float(header_match.group(2))
+            remainder = header_match.group(3).strip()
+
+            ns_match = re.match(r"\[([^\]]+)\]\s*(.*)", remainder)
+            if ns_match:
+                namespace = ns_match.group(1)
+                remainder = ns_match.group(2)
+            else:
+                namespace = "default"
+
+            remainder = re.sub(r"\s*\[\d+/\d+\]\s*$", "", remainder)
+
+            source_match = re.match(r"(\S+)", remainder)
+            source = source_match.group(1) if source_match else "unknown"
+
+            content = rest.strip() if rest else ""
+            if content:
+                results.append(
+                    RemoteSearchResult(
+                        content=content[:500],
+                        score=score,
+                        source=source,
+                        namespace=namespace,
+                    )
+                )
+
+        return results
+
+
+class StructuredResultParser(ResultParser):
+    """Parse core's future structured JSON format (Phase 2).
+
+    Not yet implemented — core has not shipped ``format="structured"``
+    support. Calling ``parse()`` raises ``NotImplementedError`` to mark
+    the Phase 2 boundary clearly in tests.
+    """
+
+    def parse(self, text: str) -> list[RemoteSearchResult]:
+        raise NotImplementedError("Structured format parser is not yet implemented (Phase 2)")
+
+
+def get_parser(fmt: str = "compact") -> ResultParser:
+    """Return a ``ResultParser`` for the given format name."""
+    if fmt == "structured":
+        return StructuredResultParser()
+    return CompactResultParser()
+
+
+_compact_parser = CompactResultParser()
+
+
 class McpClientSearchAdapter:
     """Connects to a memtomem MCP server via stdio and calls mem_search.
 
@@ -48,6 +127,7 @@ class McpClientSearchAdapter:
         self._config = config
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
+        self._parser = get_parser(getattr(config, "result_format", "compact"))
 
     async def start(self) -> None:
         """Connect to the memtomem MCP server."""
@@ -127,7 +207,7 @@ class McpClientSearchAdapter:
             return [], None
 
         text = "\n".join(text_parts)
-        return self._parse_results(text), None
+        return self._parser.parse(text), None
 
     async def increment_access(self, chunk_ids: list[str], *, trace_id: str | None = None) -> None:
         """Boost the access_count of the given chunks via mem_do(increment_access).
@@ -277,65 +357,7 @@ class McpClientSearchAdapter:
     def _parse_results(text: str) -> list[RemoteSearchResult]:
         """Parse mem_search formatted output into RemoteSearchResult objects.
 
-        Handles core's compact format::
-
-            Found 2 results:
-
-            [1] 0.92 | auth.md > Authentication
-            JWT authentication uses HS256...
-
-            [2] 0.87 | api.md
-            All API responses include rate limit headers...
-
-        With optional namespace badge ``[ns]`` and context-window
-        position indicator ``[pos/total]`` on the header line.
+        Delegates to :class:`CompactResultParser`. Kept as a static method
+        for backward compatibility with existing tests and callers.
         """
-        results: list[RemoteSearchResult] = []
-        if not text or not text.strip():
-            return results
-
-        # Split on result headers: lines starting with [rank] score |
-        blocks = re.split(r"^(?=\[\d+\]\s+\d+\.?\d*\s*\|)", text, flags=re.MULTILINE)
-
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-
-            first_line, _, rest = block.partition("\n")
-
-            # Parse header: [rank] score | ...
-            header_match = re.match(r"\[(\d+)\]\s+(\d+\.?\d*)\s*\|(.+)", first_line)
-            if not header_match:
-                continue  # skip preamble ("Found N results:") or non-result blocks
-
-            score = float(header_match.group(2))
-            remainder = header_match.group(3).strip()
-
-            # Extract optional namespace badge [ns] (ns may contain hyphens, dots, etc.)
-            ns_match = re.match(r"\[([^\]]+)\]\s*(.*)", remainder)
-            if ns_match:
-                namespace = ns_match.group(1)
-                remainder = ns_match.group(2)
-            else:
-                namespace = "default"
-
-            # Strip trailing context-window position indicator [pos/total]
-            remainder = re.sub(r"\s*\[\d+/\d+\]\s*$", "", remainder)
-
-            # Source is the first token; optional hierarchy follows " > "
-            source_match = re.match(r"(\S+)", remainder)
-            source = source_match.group(1) if source_match else "unknown"
-
-            content = rest.strip() if rest else ""
-            if content:
-                results.append(
-                    RemoteSearchResult(
-                        content=content[:500],
-                        score=score,
-                        source=source,
-                        namespace=namespace,
-                    )
-                )
-
-        return results
+        return _compact_parser.parse(text)

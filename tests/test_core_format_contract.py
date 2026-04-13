@@ -215,3 +215,91 @@ class TestContextWindowForwarding:
 
         call_args = mock_session.call_tool.call_args
         assert "context_window" not in call_args[0][1]
+
+
+# ── Parser strategy tests ────────────────────────────────────────────────
+
+from memtomem_stm.surfacing.config import SurfacingConfig  # noqa: E402
+
+
+class TestParserStrategy:
+    """Verify strategy-based parser dispatch and backward compatibility."""
+
+    def test_get_parser_default_is_compact(self):
+        from memtomem_stm.surfacing.mcp_client import CompactResultParser, get_parser
+
+        parser = get_parser()
+        assert isinstance(parser, CompactResultParser)
+
+    def test_get_parser_explicit_compact(self):
+        from memtomem_stm.surfacing.mcp_client import CompactResultParser, get_parser
+
+        parser = get_parser("compact")
+        assert isinstance(parser, CompactResultParser)
+
+    def test_get_parser_structured(self):
+        from memtomem_stm.surfacing.mcp_client import StructuredResultParser, get_parser
+
+        parser = get_parser("structured")
+        assert isinstance(parser, StructuredResultParser)
+
+    def test_compact_parser_matches_static_method(self):
+        """CompactResultParser.parse() produces identical results to _parse_results."""
+        from memtomem_stm.surfacing.mcp_client import CompactResultParser
+
+        parser = CompactResultParser()
+        for text in [
+            COMPACT_TWO_RESULTS,
+            COMPACT_WITH_NAMESPACE,
+            COMPACT_WITH_CONTEXT_WINDOW,
+            COMPACT_NON_MD_SOURCE,
+            NO_RESULTS,
+            ERROR_RESPONSE,
+        ]:
+            strategy_results = parser.parse(text)
+            static_results = McpClientSearchAdapter._parse_results(text)
+            assert len(strategy_results) == len(static_results)
+            for s, st in zip(strategy_results, static_results):
+                assert s.score == st.score
+                assert s.chunk.content == st.chunk.content
+
+    def test_structured_parser_not_implemented(self):
+        """StructuredResultParser.parse() raises NotImplementedError (Phase 2 boundary)."""
+        from memtomem_stm.surfacing.mcp_client import StructuredResultParser
+
+        parser = StructuredResultParser()
+        with pytest.raises(NotImplementedError, match="Phase 2"):
+            parser.parse("any text")
+
+    def test_adapter_uses_configured_parser(self):
+        """McpClientSearchAdapter respects config.result_format."""
+        from memtomem_stm.surfacing.mcp_client import CompactResultParser
+
+        adapter = McpClientSearchAdapter(SurfacingConfig(result_format="compact"))
+        assert isinstance(adapter._parser, CompactResultParser)
+
+
+# ── Phase 2 structured format snapshots ──────────────────────────────────
+
+STRUCTURED_TWO_RESULTS = (
+    '{"results": ['
+    '  {"rank": 1, "score": 0.92, "source": "auth.md", "hierarchy": "Authentication",'
+    '   "namespace": "default", "chunk_id": "abc123", "content": "JWT authentication..."},'
+    '  {"rank": 2, "score": 0.87, "source": "api.md", "hierarchy": "Rate Limiting",'
+    '   "namespace": "default", "chunk_id": "def456", "content": "Rate limit headers..."}'
+    "]}"
+)
+
+
+class TestStructuredFormatSnapshots:
+    """Forward-looking snapshots for Phase 2 structured format."""
+
+    @pytest.mark.xfail(reason="Phase 2 not implemented", strict=True)
+    def test_structured_two_results(self):
+        from memtomem_stm.surfacing.mcp_client import StructuredResultParser
+
+        parser = StructuredResultParser()
+        results = parser.parse(STRUCTURED_TWO_RESULTS)
+        assert len(results) == 2
+        assert results[0].score == pytest.approx(0.92)
+        assert results[1].score == pytest.approx(0.87)

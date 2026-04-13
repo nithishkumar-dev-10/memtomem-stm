@@ -68,6 +68,10 @@ class SurfacingConfig(BaseModel):
     context_window_size: int = 0  # 0=disabled; >0 expands ±N adjacent chunks
     dedup_ttl_seconds: float = 604800.0  # 7 days
     consumer_model: str = ""
+    result_format: str = "compact"
+    """Parser format for mem_search output. ``compact`` is the current
+    core format (``[rank] score | source``). ``structured`` is reserved
+    for Phase 2 machine-parseable JSON output — not yet implemented."""
 
     def _context_tokens(self) -> int | None:
         if not self.consumer_model:

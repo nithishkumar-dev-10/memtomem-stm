@@ -69,9 +69,10 @@ class SurfacingConfig(BaseModel):
     dedup_ttl_seconds: float = 604800.0  # 7 days
     consumer_model: str = ""
     result_format: str = "compact"
-    """Parser format for mem_search output. ``compact`` is the current
-    core format (``[rank] score | source``). ``structured`` is reserved
-    for Phase 2 machine-parseable JSON output — not yet implemented."""
+    """Parser format for mem_search output. ``compact`` is the legacy
+    core format (``[rank] score | source``). ``structured`` selects the
+    machine-parseable JSON format (``{"results": [...]}``) with automatic
+    version negotiation — falls back to compact if core is too old."""
 
     def _context_tokens(self) -> int | None:
         if not self.consumer_model:

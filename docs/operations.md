@@ -75,9 +75,9 @@ Sensitive content is auto-detected and never sent to external LLM compression:
 | Pattern | Example |
 |---------|---------|
 | API keys / tokens | `api_key=...`, `sk-xxxx`, `ghp_xxxx`, `xoxb-...` |
-| Passwords | `password=...`, `passwd: ...` |
+| Passwords | `password=...`, `passwd: ...`, `pwd=...` |
 | Email addresses | `user@example.com` |
-| Private keys | `BEGIN RSA PRIVATE KEY` |
+| Private keys | `BEGIN RSA PRIVATE KEY`, `BEGIN EC PRIVATE KEY`, `BEGIN OPENSSH PRIVATE KEY` |
 
 Detection scans the first 10K characters. When sensitive content is found, LLM compression falls back to local truncation.
 
@@ -196,56 +196,69 @@ Default is `1.0` (trace all). When a call is sampled out, all sub-spans are skip
 | `~/.memtomem/stm_proxy.json` | Upstream server config (hot-reloaded) | `mms` CLI |
 | `~/.memtomem/proxy_cache.db` | Response cache (SQLite, WAL mode) | ProxyCache |
 | `~/.memtomem/proxy_metrics.db` | Compression metrics history | MetricsStore |
-| `~/.memtomem/stm_feedback.db` | Surfacing events & feedback ratings | FeedbackStore |
+| `~/.memtomem/stm_feedback.db` | Surfacing events, feedback ratings & compression feedback | FeedbackStore, CompressionFeedbackStore |
 | `~/.memtomem/pending_selections.db` | Shared pending TOC state (horizontal scaling) | SQLitePendingStore |
 | `~/.memtomem/proxy_index/*.md` | Auto-indexed responses | auto-index pipeline |
 
 ```mermaid
 erDiagram
-    SURFACING_EVENT ||--o{ FEEDBACK : "0..n ratings"
-    SURFACING_EVENT ||--o{ MEMORY_REF : "1..n memories"
-    SEEN_MEMORY }o--|| MEMORY_REF : "dedup window"
+    surfacing_events ||--o{ surfacing_feedback : "0..n ratings"
 
-    SURFACING_EVENT {
-        string surfacing_id PK
+    surfacing_events {
+        string id PK "surfacing_id"
         string server
         string tool
         string query
-        float scores
-        timestamp created_at
+        string memory_ids "JSON array of memory IDs"
+        string scores "JSON array of floats"
+        real created_at
     }
-    FEEDBACK {
+    surfacing_feedback {
+        int id PK "AUTOINCREMENT"
         string surfacing_id FK
+        string memory_id "nullable"
         string rating "helpful / not_relevant / already_known"
-        string memory_id
-        timestamp created_at
+        real created_at
     }
-    MEMORY_REF {
+    seen_memories {
         string memory_id PK
-        string surfacing_id FK
+        real first_seen_at
+        real last_seen_at
+        int seen_count "DEFAULT 1"
     }
-    SEEN_MEMORY {
-        string memory_id PK
-        timestamp first_seen
-        timestamp ttl_until
+    compression_feedback {
+        int id PK "AUTOINCREMENT"
+        string server
+        string tool
+        string trace_id "nullable"
+        string kind "truncated / missing_example / missing_metadata / wrong_topic / other"
+        string missing
+        real created_at
     }
 
-    METRIC {
-        int id PK
+    proxy_metrics {
+        int id PK "AUTOINCREMENT"
         string server
         string tool
         int original_chars
         int compressed_chars
-        float duration_ms
-        string error_category
-        string trace_id
-        timestamp created_at
+        int cleaned_chars "DEFAULT 0"
+        int is_error "DEFAULT 0"
+        string error_category "nullable"
+        int error_code "nullable"
+        string trace_id "nullable"
+        string compression_strategy "nullable"
+        int ratio_violation "DEFAULT 0"
+        int scorer_fallback "DEFAULT 0"
+        real created_at
     }
-    PENDING_SELECTION {
+    pending_selections {
         string key PK
-        blob payload
-        timestamp expires_at
+        string chunks_json
+        string format
+        real created_at
+        int total_chars
     }
 ```
 
-The `SURFACING_EVENT`, `FEEDBACK`, `MEMORY_REF`, and `SEEN_MEMORY` tables live in `stm_feedback.db`. `METRIC` lives in `proxy_metrics.db`. `PENDING_SELECTION` lives in `pending_selections.db` only when the SQLite-backed `PendingStore` is enabled.
+The `surfacing_events`, `surfacing_feedback`, `seen_memories`, and `compression_feedback` tables live in `stm_feedback.db`. `proxy_metrics` lives in `proxy_metrics.db`. `pending_selections` lives in `pending_selections.db` only when the SQLite-backed `PendingStore` is enabled.

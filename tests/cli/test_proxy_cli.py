@@ -40,6 +40,17 @@ def _cfg_args(config: Path) -> list[str]:
     return ["--config", str(config)]
 
 
+# ── version command ─────────────────────────────────────────────────────
+
+
+class TestVersion:
+    def test_prints_package_version(self, runner):
+        result = runner.invoke(cli, ["version"])
+        assert result.exit_code == 0
+        assert "memtomem-stm" in result.output
+        assert result.output.strip().startswith("memtomem-stm ")
+
+
 # ── _load / config-corruption paths ──────────────────────────────────────
 
 
@@ -76,6 +87,31 @@ class TestStatus:
         assert str(config) in result.output
         assert "Enabled: yes" in result.output
         assert "Servers: 0" in result.output
+
+    def test_json_output(self, runner, config):
+        config.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "upstream_servers": {
+                        "fs": {"prefix": "fs", "command": "uvx", "args": ["mcp-server-fs"]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli, ["status", "--json", *_cfg_args(config)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["enabled"] is True
+        assert "fs" in data["servers"]
+        assert str(config) in data["config_path"]
+
+    def test_json_missing_config(self, runner, config):
+        result = runner.invoke(cli, ["status", "--json", *_cfg_args(config)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["error"] == "config_not_found"
 
     def test_shows_server_details(self, runner, config):
         config.write_text(

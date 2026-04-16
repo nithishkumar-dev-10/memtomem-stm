@@ -500,6 +500,39 @@ class TestCachedSurfacingFeedback:
 
             tracker.close()
 
+    async def test_record_failure_omits_surfacing_id(self, caplog):
+        """When record_surfacing() raises, memories are still injected but
+        the surfacing_id feedback prompt is omitted — untracked IDs must
+        never be shown to the agent."""
+        results = [FakeSearchResult(chunk=FakeChunk(id="m3", content="mem content"), score=0.7)]
+        adapter = _make_mcp_adapter(results)
+        tracker = MagicMock()
+        tracker.record_surfacing = MagicMock(side_effect=RuntimeError("DB locked"))
+        tracker.store = MagicMock()
+        tracker.store.mark_surfaced = MagicMock()
+        tracker.store.get_seen_ids = MagicMock(return_value=[])
+
+        engine = SurfacingEngine(
+            config=_make_config(cooldown_seconds=0),
+            mcp_adapter=adapter,
+            feedback_tracker=tracker,
+        )
+
+        # Cache miss path — record_surfacing raises
+        out = await engine.surface("gh", "read_file", VALID_ARGS, LONG_RESPONSE)
+
+        assert "mem content" in out
+        assert "Surfacing ID:" not in out
+        assert "Failed to record surfacing event" in caplog.text
+
+        # Cache hit path — same behavior
+        caplog.clear()
+        out2 = await engine.surface("gh", "read_file", VALID_ARGS, LONG_RESPONSE)
+
+        assert "mem content" in out2
+        assert "Surfacing ID:" not in out2
+        assert "Failed to record cached surfacing event" in caplog.text
+
     async def test_empty_scratch_list_omits_section(self):
         results = [FakeSearchResult(chunk=FakeChunk(content="LTM hit content"), score=0.5)]
         adapter = _make_mcp_adapter(results)

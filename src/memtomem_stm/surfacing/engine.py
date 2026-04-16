@@ -300,7 +300,7 @@ class SurfacingEngine:
             logger.debug("Surfacing cache hit (empty) for %s/%s", server, tool)
             return response_text
         logger.debug("Surfacing cache hit (%d results) for %s/%s", len(cached), server, tool)
-        surfacing_id = uuid.uuid4().hex[:16]
+        surfacing_id: str | None = uuid.uuid4().hex[:16]
         if self._feedback_tracker is not None:
             try:
                 self._feedback_tracker.record_surfacing(
@@ -313,6 +313,7 @@ class SurfacingEngine:
                 )
             except Exception:
                 logger.warning("Failed to record cached surfacing event", exc_info=True)
+                surfacing_id = None
         return self._formatter.inject(
             response_text,
             cached,
@@ -458,7 +459,7 @@ class SurfacingEngine:
                 scratch_items = None
 
         # Generate surfacing ID and record event
-        surfacing_id = uuid.uuid4().hex[:16]
+        surfacing_id: str | None = uuid.uuid4().hex[:16]
         if self._feedback_tracker is not None:
             try:
                 self._feedback_tracker.record_surfacing(
@@ -471,6 +472,7 @@ class SurfacingEngine:
                 )
             except Exception:
                 logger.warning("Failed to record surfacing event", exc_info=True)
+                surfacing_id = None
 
         # Persist seen IDs for cross-session dedup (in-memory guard was
         # claimed above to close the concurrent window).

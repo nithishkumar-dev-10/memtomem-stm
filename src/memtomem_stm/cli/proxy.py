@@ -376,15 +376,382 @@ def add(
 # ── init command ────────────────────────────────────────────────────────
 
 
-def _prompt_prefix() -> str:
+def _prompt_prefix(default: str | None = None) -> str:
     """Prompt for a prefix until it passes the same rules as ``add --prefix``."""
     while True:
-        value = click.prompt("Tool prefix (letters/digits/underscores, e.g. 'fs')", type=str)
+        value = click.prompt(
+            "Tool prefix (letters/digits/underscores, e.g. 'fs')",
+            type=str,
+            default=default,
+            show_default=default is not None,
+        )
         if _PREFIX_RE.match(value) and "__" not in value:
             return value
         click.echo(
             f"  {_warn('Invalid:')} must start with a letter, contain only letters/digits/"
             "underscores, and not contain '__'. Try again."
+        )
+
+
+# ── discovery of already-registered MCP servers ─────────────────────────
+#
+# Reading external-client configs is best-effort: files may not exist, may be
+# malformed, or may have shapes that don't translate (e.g. wrapper types we
+# don't support). Discovery never raises — missing/bad sources just yield
+# zero candidates and fall back to the manual prompt flow.
+
+
+def _desktop_config_path() -> Path:
+    """Claude Desktop's macOS config path; Windows/Linux variants skipped."""
+    return Path("~/Library/Application Support/Claude/claude_desktop_config.json").expanduser()
+
+
+def _read_json_safely(path: Path) -> dict[str, Any] | None:
+    try:
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _normalize_client_entry(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a client-config MCP entry to an STM upstream-server entry.
+
+    Returns ``None`` if the entry's shape isn't one we can import. STM-shape
+    requires a concrete transport and either ``command`` (stdio) or ``url``
+    (sse/streamable_http); ``prefix`` is intentionally left out so the caller
+    can prompt for it.
+    """
+    # Client configs use `type: "http"|"sse"` (Claude Code) or omit it
+    # entirely (stdio). Desktop config is stdio-only in practice.
+    type_hint = (raw.get("type") or "").lower()
+    command = raw.get("command")
+    url = raw.get("url")
+
+    if type_hint == "sse" and isinstance(url, str) and url:
+        transport = "sse"
+    elif type_hint in ("http", "streamable_http") and isinstance(url, str) and url:
+        transport = "streamable_http"
+    elif isinstance(command, str) and command:
+        transport = "stdio"
+    elif isinstance(url, str) and url:
+        # url but no type → best guess; Claude Code sometimes omits `type`.
+        transport = "streamable_http"
+    else:
+        return None
+
+    entry: dict[str, Any] = {
+        "transport": transport,
+        "compression": "auto",
+        "max_result_chars": 8000,
+    }
+    if transport == "stdio":
+        entry["command"] = command
+        args = raw.get("args")
+        if isinstance(args, list) and all(isinstance(a, str) for a in args):
+            entry["args"] = list(args)
+        env = raw.get("env")
+        if isinstance(env, dict):
+            safe_env = {
+                str(k): str(v)
+                for k, v in env.items()
+                if isinstance(k, str) and k.upper() not in _DANGEROUS_ENV_KEYS
+            }
+            if safe_env:
+                entry["env"] = safe_env
+    else:
+        entry["url"] = url
+    return entry
+
+
+# Names that should never appear as STM upstream servers:
+#
+# * ``mms`` / ``memtomem-stm`` / ``memtomem-stm-proxy`` — STM itself. Importing
+#   would proxy STM through STM, recursing on every tool call.
+# * ``memtomem`` / ``memtomem-server`` — the LTM companion. STM reaches LTM via
+#   a separate mechanism (see CLAUDE.md "pipeline" invariants); adding it as
+#   an upstream double-registers it and surfaces LTM tools twice.
+#
+# Detection looks at both the command basename *and* each argv token (exact
+# match, not substring) because ``uvx --from memtomem memtomem-server`` uses
+# ``uvx`` as the command and carries the blocked name only in args.
+_BLOCKED_IMPORT_NAMES = frozenset(
+    {
+        "mms",
+        "memtomem-stm",
+        "memtomem-stm-proxy",
+        "memtomem",
+        "memtomem-server",
+    }
+)
+
+
+def _is_self_reference(entry: dict[str, Any]) -> bool:
+    """Skip entries that would make STM proxy itself or double-register LTM."""
+    cmd = (entry.get("command") or "").lower()
+    if cmd and Path(cmd).name in _BLOCKED_IMPORT_NAMES:
+        return True
+    args = entry.get("args") or []
+    if isinstance(args, list):
+        for tok in args:
+            if isinstance(tok, str) and tok.lower() in _BLOCKED_IMPORT_NAMES:
+                return True
+    return False
+
+
+def _discover_candidates(cwd: Path) -> list[dict[str, Any]]:
+    """Scan known MCP-client configs and return importable candidates.
+
+    Each candidate dict is ``{name, source, entry}`` where ``entry`` is an
+    already-normalized STM upstream-server entry (sans prefix). The first
+    source to claim a name wins; later duplicates are dropped with a
+    ``duplicate_in`` note so the UI can indicate the overlap.
+    """
+    sources: list[tuple[str, dict[str, Any]]] = []
+
+    # 1. Project-scope ``.mcp.json`` in cwd (Claude Code project config).
+    proj = _read_json_safely(cwd / ".mcp.json")
+    if proj and isinstance(proj.get("mcpServers"), dict):
+        sources.append((".mcp.json (project)", proj["mcpServers"]))
+
+    # 2. Claude Code ~/.claude.json user-scope + per-project entries.
+    cc = _read_json_safely(Path("~/.claude.json").expanduser())
+    if cc:
+        if isinstance(cc.get("mcpServers"), dict):
+            sources.append(("Claude Code (user)", cc["mcpServers"]))
+        projects = cc.get("projects")
+        if isinstance(projects, dict):
+            # Match on resolved cwd so we don't duplicate entries across sibling projects.
+            resolved_cwd = str(cwd.resolve())
+            proj_entry = projects.get(resolved_cwd)
+            if isinstance(proj_entry, dict) and isinstance(proj_entry.get("mcpServers"), dict):
+                sources.append(("Claude Code (project)", proj_entry["mcpServers"]))
+
+    # 3. Claude Desktop (macOS path only; non-macOS → file absent → skipped).
+    desktop = _read_json_safely(_desktop_config_path())
+    if desktop and isinstance(desktop.get("mcpServers"), dict):
+        sources.append(("Claude Desktop", desktop["mcpServers"]))
+
+    seen: dict[str, dict[str, Any]] = {}
+    for source_label, servers in sources:
+        if not isinstance(servers, dict):
+            continue
+        for name, raw in servers.items():
+            if not isinstance(name, str) or not isinstance(raw, dict):
+                continue
+            entry = _normalize_client_entry(raw)
+            if entry is None or _is_self_reference(entry):
+                continue
+            if name in seen:
+                seen[name].setdefault("duplicate_in", []).append(source_label)
+                continue
+            seen[name] = {"name": name, "source": source_label, "entry": entry}
+    return list(seen.values())
+
+
+def _format_candidate_detail(entry: dict[str, Any]) -> str:
+    transport = entry.get("transport", "stdio")
+    if transport == "stdio":
+        parts = [entry.get("command", "")]
+        parts.extend(entry.get("args", []))
+        return f"[stdio] {' '.join(p for p in parts if p).strip()}"
+    return f"[{transport}] {entry.get('url', '')}"
+
+
+def _suggest_prefix(name: str, taken: set[str]) -> str:
+    """Derive a valid-ish default prefix from a server name.
+
+    Not authoritative — the user is re-prompted if invalid. Avoids clashing
+    with prefixes already chosen in the current init run.
+    """
+    base = re.sub(r"[^a-zA-Z0-9_]", "_", name).strip("_") or "srv"
+    if not base[0].isalpha():
+        base = "s_" + base
+    base = base.replace("__", "_")
+    candidate = base
+    n = 2
+    while candidate in taken:
+        candidate = f"{base}{n}"
+        n += 1
+    return candidate
+
+
+def _parse_selection(raw: str, count: int) -> list[int] | None:
+    """Parse ``"1,3,5"`` / ``"all"`` / ``""`` / ``"none"`` into 0-based indices.
+
+    Returns ``None`` on parse error so the caller can reprompt. Empty input
+    and ``"none"`` yield ``[]`` (explicit skip). Used as the non-TTY fallback
+    for :func:`_pick_imports`; interactive TTY sessions use the checkbox UI.
+    """
+    text = raw.strip().lower()
+    if text in ("", "none", "skip", "n"):
+        return []
+    if text in ("all", "a", "*"):
+        return list(range(count))
+    picks: list[int] = []
+    for tok in text.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if not tok.isdigit():
+            return None
+        idx = int(tok) - 1
+        if idx < 0 or idx >= count:
+            return None
+        if idx not in picks:
+            picks.append(idx)
+    return picks
+
+
+def _should_use_tui() -> bool:
+    """Gate for the interactive checkbox UI.
+
+    Disabled when:
+    * stdin isn't a TTY (CliRunner tests, shell pipes, CI) — there's no way
+      to read arrow-key escape sequences, so fall back to comma-number input.
+    * ``MMS_NO_TUI`` is set — explicit opt-out for users who pipe answers
+      from scripts or hit terminal-compatibility issues.
+    """
+    if os.environ.get("MMS_NO_TUI"):
+        return False
+    return bool(sys.stdin.isatty())
+
+
+# Sentinel values returned by the questionary.select loop in addition to
+# integer indices. Distinct from any valid index so a dict-based toggle set
+# can't collide.
+_TUI_CONFIRM = "__confirm__"
+_TUI_CANCEL = "__cancel__"
+
+
+def _tui_style() -> Any:
+    """High-contrast style for the import-selector prompt.
+
+    questionary's built-in palette is conservative and can read as
+    near-default in themed terminals (Ghostty, iTerm2 with custom color
+    schemes, etc.), making the active-row "bar" indistinct. Using
+    ``ansi*`` color names keeps us in the user's own terminal palette —
+    so bright cyan actually IS that terminal's bright cyan, whatever the
+    theme has redefined it to be.
+
+    Deliberately *does not* style ``class:selected``. questionary's
+    ``select()`` applies that class to the choice matching ``default=``
+    (used here to preserve cursor position across re-renders), so
+    colouring it ends up looking like a persistent highlight on the
+    last-toggled row — the exact bug reported. Check-state is already
+    conveyed by the ``[v]``/``[ ]`` marker in the title; we don't need
+    a second visual channel for it.
+    """
+    from questionary import Style
+
+    return Style(
+        [
+            ("qmark", "fg:ansibrightblue bold"),
+            ("question", "bold"),
+            ("pointer", "fg:ansibrightcyan bold"),
+            ("highlighted", "fg:ansibrightcyan bold"),
+            ("separator", "fg:ansibrightblack"),
+            ("instruction", "fg:ansibrightblack"),
+            ("answer", "fg:ansigreen bold"),
+        ]
+    )
+
+
+def _pick_imports_tui(candidates: list[dict[str, Any]]) -> list[int]:
+    """Enter-to-toggle select loop with explicit Confirm / Cancel.
+
+    Chose this over ``questionary.checkbox`` after user feedback:
+    checkbox's space-to-toggle + enter-to-confirm is technically standard
+    but non-obvious on first exposure (and the default ``●``/``○`` glyphs
+    are visually ambiguous). The select-loop instead matches the mental
+    model "press enter on what I want, scroll down to Confirm when done,"
+    with explicit ``[v]``/``[ ]`` markers in the choice titles.
+
+    Returns sorted 0-based indices. ``[]`` on Cancel or empty Confirm —
+    the caller treats either as "user declined to import anything,
+    abort the wizard without saving."
+    """
+    import questionary
+
+    picks: set[int] = set()
+    cursor: object = 0
+
+    while True:
+        choices: list[Any] = []
+        for i, c in enumerate(candidates):
+            marker = "[v]" if i in picks else "[ ]"
+            title = (
+                f"{marker}  {c['name']:<18}  "
+                f"{_format_candidate_detail(c['entry'])}  — from {c['source']}"
+            )
+            choices.append(questionary.Choice(title=title, value=i))
+        choices.append(questionary.Separator())
+        choices.append(
+            questionary.Choice(
+                title=f"Confirm — import {len(picks)} server(s)",
+                value=_TUI_CONFIRM,
+            )
+        )
+        choices.append(questionary.Choice(title="Cancel", value=_TUI_CANCEL))
+
+        # questionary's stubs declare ``default: str | Choice | dict | None``
+        # but the runtime matches on equality against Choice.value, so our
+        # int-or-sentinel cursor works fine. Ignore the type mismatch rather
+        # than muddy the cursor's declared type to suit the stub.
+        #
+        # ``use_jk_keys`` + ``use_emacs_keys`` are enabled as backup bindings
+        # in case arrow-key events don't reach the TUI (Ghostty keybindings,
+        # tmux prefix collisions, etc.) — j/k and Ctrl-N/Ctrl-P are the
+        # conventional fallbacks and cost nothing to leave on.
+        result = questionary.select(
+            "Select servers to import (↑↓ or j/k to move, Enter toggles, scroll to Confirm):",
+            choices=choices,
+            default=cursor,  # type: ignore[arg-type]
+            style=_tui_style(),
+            use_arrow_keys=True,
+            use_jk_keys=True,
+            use_emacs_keys=True,
+        ).ask()
+
+        if result is None or result == _TUI_CANCEL:
+            return []
+        if result == _TUI_CONFIRM:
+            return sorted(picks)
+        # Integer index → toggle and keep the cursor in place so the next
+        # render starts on the row the user just acted on (no disorienting
+        # jump to the top).
+        cursor = result
+        if result in picks:
+            picks.remove(result)
+        else:
+            picks.add(result)
+
+
+def _pick_imports(candidates: list[dict[str, Any]]) -> list[int]:
+    """Prompt the user to choose which discovered candidates to import.
+
+    TTY → :func:`_pick_imports_tui` (enter-to-toggle loop). Non-TTY → the
+    comma-number prompt below, with reprompt on parse error so a
+    fat-finger entry doesn't silently abort the wizard.
+    """
+    if _should_use_tui():
+        return _pick_imports_tui(candidates)
+
+    while True:
+        raw = click.prompt(
+            "Select servers to import (e.g. '1,3', 'all', or empty to skip)",
+            type=str,
+            default="",
+            show_default=False,
+        )
+        picks = _parse_selection(raw, len(candidates))
+        if picks is not None:
+            return picks
+        click.echo(
+            f"  {_warn('Invalid:')} use comma-separated numbers 1..{len(candidates)}, "
+            "'all', or leave blank."
         )
 
 
@@ -416,80 +783,125 @@ def init(config_path: str, no_validate: bool) -> None:
     click.echo(f"Config will be written to: {resolved}")
     click.echo("")
 
-    name = click.prompt("Server name (e.g. 'filesystem', 'github')", type=str).strip()
-    if not name:
-        click.echo(f"{_err('Error:')} server name must be non-empty.", err=True)
-        sys.exit(1)
+    candidates = _discover_candidates(Path.cwd())
+    imported: dict[str, dict[str, Any]] = {}
 
-    prefix = _prompt_prefix()
-
-    transport = click.prompt(
-        "Transport",
-        type=click.Choice(["stdio", "sse", "streamable_http"]),
-        default="stdio",
-        show_default=True,
-    )
-
-    entry: dict[str, Any] = {
-        "prefix": prefix,
-        "transport": transport,
-        "compression": "auto",
-        "max_result_chars": 8000,
-    }
-
-    if transport == "stdio":
-        command = click.prompt("Command (e.g. 'npx', 'uvx')", type=str).strip()
-        if not command:
+    if candidates:
+        click.echo(_hdr(f"Found {len(candidates)} MCP server(s) in existing client configs:"))
+        # TUI renders its own list; this preview exists so duplicate-source
+        # notes ("also in: X") stay visible — those don't fit inside a
+        # questionary Choice title and otherwise would be invisible.
+        for i, cand in enumerate(candidates, 1):
+            dup = cand.get("duplicate_in")
+            dup_hint = f"  (also in: {', '.join(dup)})" if dup else ""
             click.echo(
-                f"{_err('Error:')} command must be non-empty for stdio transport.",
-                err=True,
+                f"  {i:>2}. {cand['name']:<18} {_format_candidate_detail(cand['entry'])}"
+                f"    — from {cand['source']}{dup_hint}"
             )
-            sys.exit(1)
-        entry["command"] = command
+        click.echo("")
+        picks = _pick_imports(candidates)
 
-        args_str = click.prompt(
-            "Arguments (space-separated, leave empty for none)",
-            type=str,
-            default="",
-            show_default=False,
-        )
-        if args_str.strip():
-            try:
-                entry["args"] = shlex.split(args_str)
-            except ValueError as exc:
-                click.echo(f"{_err('Error:')} malformed arguments: {exc}", err=True)
-                sys.exit(1)
+        # Empty selection when candidates exist = intentional "not this
+        # time" (cancel, or Confirm with nothing toggled). We don't
+        # silently drop into the manual-name prompt, which was confusing
+        # when users just wanted to re-think: nothing is saved, the user
+        # can rerun ``mms init`` fresh or use ``mms add`` explicitly.
+        if not picks:
+            click.echo("")
+            click.echo(
+                f"{_ok('No servers selected.')} Config not written — "
+                "rerun `mms init` to re-select, or use `mms add` to configure one by name."
+            )
+            return
+
+        click.echo("")
+        used_prefixes: set[str] = set()
+        for idx in picks:
+            cand = candidates[idx]
+            click.echo(_hdr(f"Configuring '{cand['name']}'"))
+            suggested = _suggest_prefix(cand["name"], used_prefixes)
+            prefix = _prompt_prefix(default=suggested)
+            used_prefixes.add(prefix)
+            entry = {"prefix": prefix, **cand["entry"]}
+            imported[cand["name"]] = entry
     else:
-        url = click.prompt(f"URL for {transport}", type=str).strip()
-        if not url:
-            click.echo(
-                f"{_err('Error:')} URL must be non-empty for {transport} transport.",
-                err=True,
-            )
+        # Zero discovered candidates → true first-time user without any
+        # existing MCP-client config. Full manual prompt flow.
+        name = click.prompt("Server name (e.g. 'filesystem', 'github')", type=str).strip()
+        if not name:
+            click.echo(f"{_err('Error:')} server name must be non-empty.", err=True)
             sys.exit(1)
-        entry["url"] = url
 
-    if not no_validate and click.confirm("Validate connection now?", default=True):
-        click.echo(f"Validating '{name}' (timeout=10s)...")
-        probe = asyncio.run(_probe_servers({name: entry}, 10))[name]
-        if probe["connected"]:
-            click.echo(f"  {_ok('Reachable:')} {probe['tools']} tool(s) discovered.")
+        prefix = _prompt_prefix()
+
+        transport = click.prompt(
+            "Transport",
+            type=click.Choice(["stdio", "sse", "streamable_http"]),
+            default="stdio",
+            show_default=True,
+        )
+
+        entry = {
+            "prefix": prefix,
+            "transport": transport,
+            "compression": "auto",
+            "max_result_chars": 8000,
+        }
+
+        if transport == "stdio":
+            command = click.prompt("Command (e.g. 'npx', 'uvx')", type=str).strip()
+            if not command:
+                click.echo(
+                    f"{_err('Error:')} command must be non-empty for stdio transport.",
+                    err=True,
+                )
+                sys.exit(1)
+            entry["command"] = command
+
+            args_str = click.prompt(
+                "Arguments (space-separated, leave empty for none)",
+                type=str,
+                default="",
+                show_default=False,
+            )
+            if args_str.strip():
+                try:
+                    entry["args"] = shlex.split(args_str)
+                except ValueError as exc:
+                    click.echo(f"{_err('Error:')} malformed arguments: {exc}", err=True)
+                    sys.exit(1)
         else:
-            click.echo(f"  {_warn('Warning:')} probe failed — {probe['error']}", err=True)
-            click.echo("  Saving config anyway. Run `mms health` later to retry.", err=True)
+            url = click.prompt(f"URL for {transport}", type=str).strip()
+            if not url:
+                click.echo(
+                    f"{_err('Error:')} URL must be non-empty for {transport} transport.",
+                    err=True,
+                )
+                sys.exit(1)
+            entry["url"] = url
 
-    data = {"enabled": True, "upstream_servers": {name: entry}}
+        imported[name] = entry
+
+    if not no_validate and click.confirm("Validate connection(s) now?", default=True):
+        probe_map = {n: e for n, e in imported.items()}
+        click.echo(f"Validating {len(probe_map)} server(s) (timeout=10s)...")
+        probes = asyncio.run(_probe_servers(probe_map, 10))
+        for n, probe in probes.items():
+            if probe["connected"]:
+                click.echo(f"  {_ok('Reachable:')} {n} — {probe['tools']} tool(s).")
+            else:
+                click.echo(f"  {_warn('Warning:')} {n} — probe failed: {probe['error']}", err=True)
+                click.echo("  Saving config anyway. Run `mms health` later to retry.", err=True)
+
+    data = {"enabled": True, "upstream_servers": imported}
     _save(path, data)
 
     click.echo("")
     click.echo(f"{_ok('Saved to:')} {resolved}")
     click.echo("")
     click.echo(_hdr("Configured upstream servers:"))
-    if transport == "stdio":
-        detail = f"{entry['command']} {' '.join(entry.get('args', []))}".strip()
-    else:
-        detail = entry["url"]
-    click.echo(f"  {name:<20} prefix={prefix}  [{transport}] {detail}")
+    for n, e in imported.items():
+        click.echo(f"  {n:<20} prefix={e['prefix']}  {_format_candidate_detail(e)}")
 
     click.echo("")
     click.echo(f"{_ok('Next:')} connect your MCP client to memtomem-stm.")

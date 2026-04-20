@@ -68,11 +68,15 @@ class ErrorCategory(StrEnum):
     """Classification of proxy call errors for metrics tracking."""
 
     TRANSPORT = "transport"  # OSError, ConnectionError, EOFError
-    TIMEOUT = "timeout"  # asyncio.TimeoutError
+    TIMEOUT = "timeout"  # asyncio.TimeoutError on upstream call_tool
     PROTOCOL = "protocol"  # JSON-RPC errors (-32600..-32603)
     UPSTREAM_ERROR = "upstream_error"  # result.isError=True from upstream
     PROGRAMMING = "programming"  # TypeError, AttributeError, etc.
-    INTERNAL_ERROR = "internal_error"  # raised inside the COMPRESS/SURFACE/INDEX pipeline
+    INTERNAL_ERROR = "internal_error"  # raised inside COMPRESS/SURFACE/INDEX pipeline
+    # Note: LLM compression timeout (#207) is NOT an error category — the call
+    # succeeds via graceful truncate fallback. The signal lives in the
+    # ``compression_strategy`` column as ``"llm_summary→timeout_fallback"``;
+    # dashboards filter via ``WHERE compression_strategy LIKE '%timeout_fallback%'``.
 
 
 def _percentile(sorted_vals: list[float], p: float) -> float:

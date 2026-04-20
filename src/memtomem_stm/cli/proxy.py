@@ -403,6 +403,11 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
+@click.version_option(
+    package_name="memtomem-stm",
+    prog_name="memtomem-stm",
+    message="%(prog)s %(version)s",
+)
 def cli() -> None:
     """memtomem-stm proxy gateway management.
 
@@ -410,6 +415,10 @@ def cli() -> None:
     """
 
 
+# ``version`` subcommand predates the ``--version`` flag (CHANGELOG #152) and
+# is kept for backwards compatibility. Both paths must produce the exact same
+# line so scripts that grep the version string don't care which entry point
+# they use.
 @cli.command()
 def version() -> None:
     """Show the installed memtomem-stm version."""
@@ -475,10 +484,31 @@ def status(config_path: str, *, as_json: bool = False) -> None:
 
 @cli.command(name="list")
 @click.option("--config", "config_path", default=str(_DEFAULT_CONFIG), show_default=True)
-def list_servers(config_path: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON for scripting.")
+def list_servers(config_path: str, *, as_json: bool = False) -> None:
     """List configured upstream servers."""
-    data = _load(Path(config_path))
+    path = Path(config_path)
+    resolved = path.expanduser().resolve()
+
+    # Missing-config handling matches ``status --json`` so scripts can probe
+    # either command without branching on shape. Text path keeps the prior
+    # ``_load`` fallthrough (empty dict → "No upstream servers configured").
+    if as_json and not resolved.exists():
+        click.echo(json.dumps({"error": "config_not_found", "path": str(resolved)}))
+        return
+
+    data = _load(path)
     servers: dict[str, Any] = data.get("upstream_servers", {})
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {"config_path": str(resolved), "servers": servers},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
 
     if not servers:
         click.echo("No upstream servers configured.")

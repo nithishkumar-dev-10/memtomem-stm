@@ -53,6 +53,17 @@ class TestVersion:
         assert "memtomem-stm" in result.output
         assert result.output.strip().startswith("memtomem-stm ")
 
+    def test_version_flag_matches_subcommand(self, runner):
+        """``--version`` is the idiomatic Click entry point; the subcommand
+        predates it. Both must emit the identical line so scripts that grep
+        the version don't care which they invoke (CHANGELOG keeps the
+        subcommand for compatibility)."""
+        flag = runner.invoke(cli, ["--version"])
+        sub = runner.invoke(cli, ["version"])
+        assert flag.exit_code == 0
+        assert sub.exit_code == 0
+        assert flag.output.strip() == sub.output.strip()
+
 
 # ── style helpers / NO_COLOR contract ───────────────────────────────────
 
@@ -230,6 +241,45 @@ class TestListServers:
         )
         result = runner.invoke(cli, ["list", *_cfg_args(config)])
         assert "example.com/mcp" in result.output
+
+    def test_json_output(self, runner, config):
+        """``list --json`` mirrors ``status --json`` shape for scripting."""
+        config.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "upstream_servers": {
+                        "fs": {"prefix": "fs", "command": "uvx", "args": ["mcp-server-fs"]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli, ["list", "--json", *_cfg_args(config)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "fs" in data["servers"]
+        assert str(config) in data["config_path"]
+        # ``enabled`` is proxy-wide state owned by ``status`` — its absence
+        # here is intentional. Pinning it prevents a future copy-paste from
+        # ``status --json`` silently widening the contract.
+        assert "enabled" not in data
+
+    def test_json_empty_config(self, runner, config):
+        """Empty config → empty ``servers`` object, not text fallback."""
+        config.write_text(json.dumps({"enabled": True, "upstream_servers": {}}), encoding="utf-8")
+        result = runner.invoke(cli, ["list", "--json", *_cfg_args(config)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["servers"] == {}
+
+    def test_json_missing_config(self, runner, config):
+        """Missing config → same ``{error, path}`` shape as ``status --json``."""
+        result = runner.invoke(cli, ["list", "--json", *_cfg_args(config)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["error"] == "config_not_found"
+        assert str(config) in data["path"]
 
 
 # ── add command — validation paths ───────────────────────────────────────

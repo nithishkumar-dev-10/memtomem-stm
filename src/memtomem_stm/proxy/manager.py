@@ -782,6 +782,8 @@ class ProxyManager:
         server: str,
         tool: str,
         sel_cfg: SelectiveConfig | None = None,
+        *,
+        trace_id: str | None = None,
     ) -> str:
         store = self._get_progressive_store(sel_cfg)
         store.evict(cfg.ttl_seconds, cfg.max_stored)
@@ -795,6 +797,9 @@ class ProxyManager:
             structure_hint=ProgressiveChunker.structure_hint(text),
             created_at=_time.monotonic(),
             ttl_seconds=cfg.ttl_seconds,
+            server=server,
+            tool=tool,
+            trace_id=trace_id,
         )
         store.put(key, resp)
 
@@ -805,17 +810,38 @@ class ProxyManager:
         return chunker.first_chunk(text, key, ttl_seconds=cfg.ttl_seconds)
 
     def read_more(self, key: str, offset: int, limit: int | None = None) -> str:
-        """Return next chunk from a progressive delivery response."""
+        """Return next chunk from a progressive delivery response.
+
+        Wrapped in a ``proxy_call_read_more`` span (when Langfuse is
+        configured) so that the revisit is filterable in the Langfuse UI
+        as a cohort with the original ``proxy_call``. Correlation is
+        metadata-tag based (both spans carry the same ``trace_id``
+        attribute), not trace-tree merging — the two MCP turns run in
+        separate OTel contexts, so this span is always a root. Other
+        ``stm_proxy_*`` tools lack spans because they are local reads;
+        ``read_more`` is the exception because it is a revisit of a prior
+        upstream call and otherwise loses its link to the originating
+        trace_id.
+        """
         store = self._get_progressive_store()
         resp = store.get(key)
         if resp is None:
             return f"Progressive delivery key '{key}' not found or expired."
-        store.touch(key)
-        chunk_size = limit or 4000
-        chunker = ProgressiveChunker(chunk_size=chunk_size, include_hint=True)
-        return chunker.read_chunk(
-            resp.content, offset, limit, key=key, ttl_seconds=resp.ttl_seconds
-        )
+        with traced(
+            "proxy_call_read_more",
+            metadata={
+                "server": resp.server,
+                "tool": resp.tool,
+                "trace_id": resp.trace_id,
+                "key": key,
+            },
+        ):
+            store.touch(key)
+            chunk_size = limit or 4000
+            chunker = ProgressiveChunker(chunk_size=chunk_size, include_hint=True)
+            return chunker.read_chunk(
+                resp.content, offset, limit, key=key, ttl_seconds=resp.ttl_seconds
+            )
 
     def get_upstream_health(self) -> dict[str, dict]:
         """Return per-server health: connection status, tool count."""
@@ -1211,7 +1237,7 @@ class ProxyManager:
                 compressed = cleaned
             else:
                 compressed = self._apply_progressive(
-                    cleaned, pcfg, server, tool, sel_cfg=tc.selective
+                    cleaned, pcfg, server, tool, sel_cfg=tc.selective, trace_id=trace_id
                 )
             _compress_ms = 0.0
             compressed_chars_for_metrics = len(cleaned)
@@ -1317,7 +1343,12 @@ class ProxyManager:
                         if cleaned_len > pcfg.chunk_size:
                             try:
                                 compressed = self._apply_progressive(
-                                    cleaned, pcfg, server, tool, sel_cfg=tc.selective
+                                    cleaned,
+                                    pcfg,
+                                    server,
+                                    tool,
+                                    sel_cfg=tc.selective,
+                                    trace_id=trace_id,
                                 )
                                 metrics_strategy = f"{original_strategy}→progressive_fallback"
                                 progressive_fallback = True
